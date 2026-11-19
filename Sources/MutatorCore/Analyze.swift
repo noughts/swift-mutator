@@ -29,7 +29,9 @@ public struct Analysis: Sendable {
 
 /// Subtrees without mutable runtime code, or where a switch could not be compiled.
 private func isSkipped(_ node: Syntax) -> Bool {
-    if node.is(TypeSyntax.self) || node.is(PatternSyntax.self) { return true }
+    if node.is(TypeSyntax.self) || isTypeLiteral(node) { return true }
+    // Patterns bind names; the expressions of an expression pattern (`case "GET":`) are values.
+    if node.is(PatternSyntax.self), !node.is(ExpressionPatternSyntax.self) { return true }
     switch node.kind {
     case .attributeList, .importDecl, .typeAliasDecl, .associatedTypeDecl, .protocolDecl, .operatorDecl, .precedenceGroupDecl,
          .enumCaseDecl, .macroExpansionExpr, .macroExpansionDecl, .macroDecl, .genericParameterClause, .genericWhereClause,

@@ -113,7 +113,8 @@ public func plan(_ input: PlanInput) -> [PlanEntry] {
         let prev = prevByKey[m.key]
         if let prev, canReuse(m, prev) { return .reuse(m, prev) }
         var seen = Set<String>()
-        let selected = (input.coverage[m.key] ?? []).filter { testById[$0] != nil && seen.insert($0).inserted }
+        // A covering test with no known duration is kept, and runs last.
+        let selected = (input.coverage[m.key] ?? []).filter { seen.insert($0).inserted }
         if selected.isEmpty { return .noCoverage(m) }
         let ordered = order(m, prev, selected)
         let total = ordered.reduce(0) { $0 + (testById[$1]?.durationMs ?? 0) }

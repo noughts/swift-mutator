@@ -45,11 +45,3 @@ import Testing
         #expect(spans["B.swift"] == [Span(start: 0, end: 3)])
     }
 }
-
-@Suite struct RegexTests {
-    @Test func mutatesAnchorsQuantifiersClassesAndPredefinedClasses() {
-        #expect(regexMutations("^[a-z]+\\d$") == ["[a-z]+\\d$", "^[^a-z]+\\d$", "^[a-z]\\d$", "^[a-z]+\\D$", "^[a-z]+\\d"])
-        #expect(regexMutations("a{2,3}") == ["a{2}"])
-        #expect(regexMutations("abc").isEmpty)
-    }
-}

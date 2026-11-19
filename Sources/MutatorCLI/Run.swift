@@ -171,9 +171,9 @@ func runMutation(_ options: Options) async throws -> Int32 {
     if options.reporters.contains("json") || options.reporters.contains("html") {
         let dir = options.reportDir.map { URL(fileURLWithPath: $0, relativeTo: root) } ?? mutatorDir.appendingPathComponent("report")
         try fm.createDirectory(at: dir, withIntermediateDirectories: true)
-        let json = encodeReport(mutationTestingReport(ordered, sources: Dictionary(uniqueKeysWithValues: sources.map { ($0.path, $0.text) }), projectRoot: root.path, version: toolVersion, thresholds: thresholds, diffOnly: diffOnly))
-        if options.reporters.contains("json") { try json.write(to: dir.appendingPathComponent("mutation.json"), atomically: true, encoding: .utf8) }
-        if options.reporters.contains("html") { try htmlReport(json: json).write(to: dir.appendingPathComponent("index.html"), atomically: true, encoding: .utf8) }
+        let mte = mutationTestingReport(ordered, sources: Dictionary(uniqueKeysWithValues: sources.map { ($0.path, $0.text) }), projectRoot: root.path, version: toolVersion, thresholds: thresholds, diffOnly: diffOnly)
+        if options.reporters.contains("json") { try encodeReport(mte).write(to: dir.appendingPathComponent("mutation.json"), atomically: true, encoding: .utf8) }
+        if options.reporters.contains("html") { try htmlReport(mte).write(to: dir.appendingPathComponent("index.html"), atomically: true, encoding: .utf8) }
         log("reports written to \(dir.path)")
     }
     let failures = gateFailures(ordered, diffOnly: diffOnly, thresholds: thresholds, failOnSurvived: options.failOnSurvived)

@@ -104,7 +104,8 @@ public func formatSummary(_ entries: [ReportEntry], facts: RunFacts, thresholds:
     let scope = facts.diffOnly ? " in the diff" : ""
     lines.append("swift-mutator: \(shown.count) mutants\(scope) (\(entries.count) in \(facts.files) files)")
     lines.append("  killed \(count(.killed)) · survived \(count(.survived)) · no coverage \(count(.noCoverage)) · timeout \(count(.timeout)) · compile error \(count(.compileError)) · ignored \(count(.ignored)) · pending \(count(.pending))")
-    lines.append(String(format: "  score %.1f%% [%@] · ran %d, reused %d · dry run %d/%d tests · %d build round(s) · %.1fs", percent, thresholds.label(percent), ran, reused, facts.measuredTests, facts.totalTests, facts.buildRounds, Double(facts.durationMs) / 1000))
+    let seconds = String(format: "%.1f", Double(facts.durationMs) / 1000)
+    lines.append("  score: \(String(format: "%.1f", percent))% [\(thresholds.label(percent))] · ran \(ran), reused \(reused) · dry run \(facts.measuredTests)/\(facts.totalTests) tests · \(facts.buildRounds) build round(s) · \(seconds)s")
     let survived = shown.filter { $0.status == .survived }
     if !survived.isEmpty {
         lines.append("")
@@ -167,7 +168,18 @@ public struct MTEReport: Codable, Sendable {
     public let thresholds: [String: Double]
     public let projectRoot: String
     public let framework: Framework
+    public struct TestFile: Codable, Sendable {
+        public struct Test: Codable, Sendable {
+            public let id: String
+            public let name: String
+        }
+
+        public let tests: [Test]
+    }
+
     public let files: [String: File]
+    /// Tests referenced by any mutant, grouped by test module (Swift test ids are `Module.Type/test`).
+    public let testFiles: [String: TestFile]
 }
 
 /// 1-based line and column, the column counted in UTF-16 units like the report viewer does.
@@ -205,19 +217,28 @@ public func mutationTestingReport(_ entries: [ReportEntry], sources: [String: St
         thresholds: ["high": thresholds.high, "low": thresholds.low],
         projectRoot: projectRoot,
         framework: MTEReport.Framework(name: "swift-mutator", version: version),
-        files: files
+        files: files,
+        testFiles: testFiles(entries)
     )
 }
 
-public func encodeReport(_ report: MTEReport) -> String {
+private func testFiles(_ entries: [ReportEntry]) -> [String: MTEReport.TestFile] {
+    let ids = Set(entries.flatMap { $0.killedBy + $0.coveredBy }).sorted()
+    return Dictionary(grouping: ids, by: testModule).mapValues { ids in
+        MTEReport.TestFile(tests: ids.map { MTEReport.TestFile.Test(id: $0, name: String($0.dropFirst(testModule($0).count + 1))) })
+    }
+}
+
+public func encodeReport(_ report: MTEReport, pretty: Bool = true) -> String {
     let encoder = JSONEncoder()
-    encoder.outputFormatting = [.sortedKeys, .prettyPrinted, .withoutEscapingSlashes]
+    encoder.outputFormatting = pretty ? [.sortedKeys, .prettyPrinted, .withoutEscapingSlashes] : [.sortedKeys, .withoutEscapingSlashes]
     return String(decoding: (try? encoder.encode(report)) ?? Data(), as: UTF8.self)
 }
 
-/// A standalone HTML page with the JSON inlined; the viewer component loads from unpkg.
-public func htmlReport(json: String) -> String {
-    let inlined = json.replacingOccurrences(of: "</", with: "<\\/")
+/// A standalone HTML page with the report inlined; the viewer component loads from a pinned CDN url.
+public func htmlReport(_ report: MTEReport) -> String {
+    // `<` keeps `</script>` inside sources from terminating the inline script.
+    let data = encodeReport(report, pretty: false).replacingOccurrences(of: "<", with: "\\u003c")
     return """
     <!DOCTYPE html>
     <html lang="en">
@@ -225,11 +246,19 @@ public func htmlReport(json: String) -> String {
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>swift-mutator report</title>
-    <script src="https://unpkg.com/mutation-testing-elements@\(mutationTestingElementsVersion)/dist/mutation-test-elements.js"></script>
+    <script src="https://www.unpkg.com/mutation-testing-elements@\(mutationTestingElementsVersion)/dist/mutation-test-elements.js"></script>
     </head>
     <body>
-    <mutation-test-report-app title-postfix="swift-mutator"></mutation-test-report-app>
-    <script>document.querySelector('mutation-test-report-app').report = \(inlined);</script>
+    <mutation-test-report-app title-postfix="swift-mutator">
+      Your browser doesn't support custom elements. Please use a modern browser.
+    </mutation-test-report-app>
+    <script>
+      const app = document.querySelector('mutation-test-report-app');
+      app.report = \(data);
+      function updateTheme() { document.body.style.backgroundColor = app.themeBackgroundColor; }
+      app.addEventListener('theme-changed', updateTheme);
+      updateTheme();
+    </script>
     </body>
     </html>
 
@@ -242,11 +271,11 @@ public func gateFailures(_ entries: [ReportEntry], diffOnly: Bool, thresholds: T
     var out: [String] = []
     let percent = scorePercent(shown, diffOnly: diffOnly)
     if let breakAt = thresholds.breakAt, percent < breakAt {
-        out.append(String(format: "score %.1f%% is below the break threshold %.1f%%", percent, breakAt))
+        out.append(String(format: "mutation score %.1f%% is below the break threshold %g%%", percent, breakAt))
     }
-    let undetected = shown.filter { $0.status.isUndetected }.count
-    if failOnSurvived, undetected > 0 {
-        out.append("\(undetected) undetected mutant(s) with --fail-on-survived")
+    let survived = shown.filter { $0.status == .survived }.count
+    if failOnSurvived, survived > 0 {
+        out.append("\(survived) mutant(s) survived (--fail-on-survived)")
     }
     return out
 }

@@ -46,7 +46,7 @@ swift-mutator                          # 2回目以降は変わっていない�
 swift-mutator --since main             # PR モード: main との差分にある変異だけ
 swift-mutator --reporter text --reporter html --reporter json
 swift-mutator --list                   # 実行せずに変異の一覧だけを出す
-swift-mutator --fail-on-survived       # 未検出の変異があれば exit 2
+swift-mutator --fail-on-survived       # Survived（not detected）の変異があれば exit 2
 ```
 
 対象パッケージの `.gitignore` に `.mutator/` を追加してください（サンドボックス・スナップショット・レポートの置き場所です）。
@@ -91,7 +91,7 @@ let x = a + b // mutator-disable-line
 |---|---|
 | `0` | 正常 |
 | `1` | 不正なオプション、その他の失敗 |
-| `2` | 品質ゲート失敗（`--threshold-break` 未満、`--fail-on-survived` で未検出あり） |
+| `2` | 品質ゲート失敗（`--threshold-break` 未満、`--fail-on-survived` で Survived あり） |
 | `4` | 変異なしでテストが失敗する、またはサンドボックスでビルドできない |
 
 ## 仕組み
@@ -136,7 +136,7 @@ report              テキスト要約、mutation-testing-elements 形式の JSO
 
 元実装の ArrowFunction（`undefined` が存在しない）と UpdateOperator（`++` / `--` が存在しない）は移植していません。
 
-変異を置かない箇所: `@inlinable` / `@_alwaysEmitIntoClient` / `@_transparent` の本体（クライアントにコピーされ、ファイル内ランタイムを参照できないため）、デフォルト引数、enum の raw value、属性・マクロの引数、`#if` の条件、パターン、型。
+変異を置かない箇所: `@inlinable` / `@_alwaysEmitIntoClient` / `@_transparent` の本体（クライアントにコピーされ、ファイル内ランタイムを参照できないため）、デフォルト引数、enum の raw value、属性・マクロの引数、`#if` の条件、名前を束縛するパターン（`case let x`、`case .some(let x)`）、型、`[Int]()` のように呼び出される型。束縛を含まない式パターン（`case "GET":`、`case a == b:`）は変異させます。
 
 ## mizchi/mutator との対応
 
@@ -172,7 +172,23 @@ weak mutation（感染しない変異を実行せずに判定）、`--kill-matri
 swift test
 ```
 
-`MutatorCoreTests` は純粋関数の単体テスト、`MutatorCLITests` は `Examples/Pricing` のコピーに対して実際に `swift build` とテストプロセスを通す統合テストです（数十秒かかります）。
+- `MutatorCoreTests`: 純粋関数の単体テストです。
+- `MutatorCLITests`: 実際に `swift build`・`swiftc` とテストプロセスを通す統合テストで、1分ほどかかります。
+
+テストの多くはオリジナルのテストから移植しています。オリジナルの入力が TypeScript / JavaScript の場合は Swift のコードに書き換えています。
+
+| オリジナルのテスト | 移植先 |
+|---|---|
+| `core/test/diff.test.ts` | `DiffTests.swift`（全 46 件） |
+| `core/test/plan.test.ts` | `PlanTests.swift` |
+| `core/test/disable.test.ts`、`arid.test.ts` | `DisableTests.swift`、`AridTests.swift`（全件） |
+| `core/test/mutators.test.ts`、`instrument.test.ts` | `MutatorsTests.swift`、`InstrumentTests.swift` |
+| 上記のミューテーションスイッチングのオラクルとカバレッジ記録 | `Tests/MutatorCLITests/SwitchingOracleTests.swift` |
+| `cli/test/mte-report.test.ts`、`gate.test.ts` | `MutationTestingReportTests.swift` |
+
+移植したのは、swift-mutator にある機能のテストです。移植していない機能のテストは対象外にしており、各テストファイルの冒頭に、何を移植していないかを書いています。
+
+振る舞いオラクルは、計装したコードで変異 k を有効にした実行結果が、変異 k だけを適用したソースの実行結果と一致することを、コーパス内のすべての変異について確かめます。Swift ではこれを、変異ごとに実際にコンパイルして実行することで確かめています。
 
 ## クレジットとライセンス
 

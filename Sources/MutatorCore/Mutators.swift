@@ -40,11 +40,11 @@ private func swapOperator(_ node: Syntax, _ token: TokenSyntax, to: String, _ mu
 }
 
 private func isStringy(_ expr: ExprSyntax) -> Bool {
-    unwrapParens(expr).is(StringLiteralExprSyntax.self)
+    unwrap(expr).is(StringLiteralExprSyntax.self)
 }
 
 private func isCollectionLiteral(_ expr: ExprSyntax) -> Bool {
-    let inner = unwrapParens(expr)
+    let inner = unwrap(expr)
     return inner.is(ArrayExprSyntax.self) || inner.is(DictionaryExprSyntax.self)
 }
 
@@ -56,7 +56,7 @@ private let arithmeticOperator: Mutator = { node, ctx in
     guard let (infix, token) = infixOperator(node), let to = arithmetic[token.text] else { return [] }
     if token.text == "+" || token.text == "&+" {
         // `"a" + b` and `xs + [x]` concatenate: `-` does not type-check there.
-        let left = unwrapParens(infix.leftOperand)
+        let left = unwrap(infix.leftOperand)
         let leftmost = left.as(InfixOperatorExprSyntax.self)?.rightOperand ?? infix.leftOperand
         let operands = [infix.leftOperand, infix.rightOperand, leftmost]
         if operands.contains(where: { isStringy($0) || isCollectionLiteral($0) }) { return [] }
@@ -127,12 +127,12 @@ private enum TestPosition {
     case loop(first: Bool)
 }
 
-/// Whether the value of `node` is only used for its truth by an if / guard / while / repeat / ternary.
+/// Whether `node` itself is the condition of an if / guard / while / repeat / ternary: its value
+/// is only used for its truth.
 private func testPosition(_ node: Syntax) -> TestPosition? {
-    let position = outermost(node)
-    if position.isKeyPath(\TernaryExprSyntax.condition) { return .branch(first: true) }
-    if position.isKeyPath(\RepeatStmtSyntax.condition) { return .loop(first: true) }
-    guard position.isKeyPath(\ConditionElementSyntax.condition), let element = position.parent?.as(ConditionElementSyntax.self),
+    if node.isKeyPath(\TernaryExprSyntax.condition) { return .branch(first: true) }
+    if node.isKeyPath(\RepeatStmtSyntax.condition) { return .loop(first: true) }
+    guard node.isKeyPath(\ConditionElementSyntax.condition), let element = node.parent?.as(ConditionElementSyntax.self),
           let list = element.parent?.as(ConditionElementListSyntax.self), let owner = list.parent else { return nil }
     let first = list.first { if case .expression = $0.condition { true } else { false } }?.id == element.id
     if owner.is(WhileStmtSyntax.self) { return .loop(first: first) }
@@ -152,8 +152,11 @@ private let conditionalExpression: Mutator = { node, _ in
         break
     }
     guard let (_, token) = infixOperator(node), equality[token.text] != nil || token.text == "&&" || token.text == "||" else { return [] }
+    // Inside parentheses or a cast in a condition, the condition itself already produced these.
+    let position = outermost(node)
+    if testPosition(position) != nil { return [] }
     // `a || <x>` with x=true / `a && <x>` with x=false collapse to mutants of the parent.
-    let outer = outermost(node).parent.flatMap(infixOperator)?.1.text
+    let outer = position.parent.flatMap(infixOperator)?.1.text
     var out: [Candidate] = []
     if outer != "||" { out.append(whole(node, .conditionalExpression, "true")) }
     if outer != "&&" { out.append(whole(node, .conditionalExpression, "false")) }
@@ -302,6 +305,9 @@ private let unsignedNumbers: Set<String> = ["UInt", "UInt8", "UInt16", "UInt32",
 
 /// Swift expressions inhabiting a type, derived syntactically. Unknown types yield nothing.
 private func typeValues(_ type: TypeSyntax) -> [String] {
+    if let tuple = type.as(TupleTypeSyntax.self), tuple.elements.count == 1, let only = tuple.elements.first, only.firstName == nil {
+        return typeValues(only.type)
+    }
     if let optional = type.as(OptionalTypeSyntax.self) { return unique(["nil"] + typeValues(optional.wrappedType)) }
     if type.is(ArrayTypeSyntax.self) { return ["[]"] }
     if type.is(DictionaryTypeSyntax.self) { return ["[:]"] }
@@ -335,7 +341,7 @@ private func unique(_ values: [String]) -> [String] {
 }
 
 private func sameValue(_ expr: ExprSyntax, _ value: String) -> Bool {
-    unwrapParens(expr).trimmedDescription.filter { !$0.isWhitespace } == value.filter { !$0.isWhitespace }
+    unwrap(expr).trimmedDescription.filter { !$0.isWhitespace } == value.filter { !$0.isWhitespace }
 }
 
 /// The expression a body returns when it is its only statement (`{ x }` or `{ return x }`).

@@ -106,6 +106,18 @@ private func isFixedPosition(_ node: Syntax) -> Bool {
     return fixed.contains { node.isKeyPath($0) }
 }
 
+/// Inside an expression pattern: whether the expression binds names (`.foo(let x, 0)`).
+private func bindsNames(_ node: Syntax) -> Bool {
+    var ancestor = node.parent
+    while let current = ancestor, !current.is(ExpressionPatternSyntax.self) {
+        if current.is(CodeBlockItemSyntax.self) || current.is(MemberBlockItemSyntax.self) { return false }
+        ancestor = current.parent
+    }
+    guard ancestor != nil else { return false }
+    func contains(_ syntax: Syntax) -> Bool { syntax.is(PatternExprSyntax.self) || syntax.children(viewMode: .sourceAccurate).contains(where: contains) }
+    return contains(node)
+}
+
 private func expressionAllowed(_ expr: ExprSyntax) -> Bool {
     let node = Syntax(expr)
     switch node.kind {
@@ -117,7 +129,7 @@ private func expressionAllowed(_ expr: ExprSyntax) -> Bool {
     default:
         break
     }
-    if isAssignment(node) { return false }
+    if isAssignment(node) || bindsNames(node) { return false }
     let position = outermost(node)
     if isFixedPosition(position) { return false }
     if position.isKeyPath(\InfixOperatorExprSyntax.leftOperand), let parent = position.parent, isAssignment(parent) { return false }

@@ -9,12 +9,12 @@ public struct DiffHunk: Hashable, Sendable {
     public var lines: [String]
 }
 
-/// A file of a diff made with `--no-prefix` (paths without `a/` / `b/`).
 public struct FileDiff: Hashable, Sendable {
     /// nil = /dev/null
     public let oldPath: String?
     public let newPath: String?
     public let hunks: [DiffHunk]
+    public let binary: Bool
 }
 
 public enum SelectMode: String, Sendable {
@@ -35,13 +35,13 @@ private struct RawFile {
     var binaryPaths: (String, String)?
     var created = false
     var deleted = false
+    var binary = false
     var hunks: [DiffHunk] = []
 }
 
 public func parseUnifiedDiff(_ text: String) -> [FileDiff] {
-    let lines = text.split(separator: "\n", omittingEmptySubsequences: false).map { line in
-        line.hasSuffix("\r") ? String(line.dropLast()) : String(line)
-    }
+    // `\r\n` is a single Character in Swift, so it is a separator of its own.
+    let lines = text.split(omittingEmptySubsequences: false) { $0 == "\n" || $0 == "\r\n" }.map(String.init)
     var raws: [RawFile] = []
     var i = 0
     while i < lines.count {
@@ -118,25 +118,45 @@ private func readExtendedHeader(_ line: String, into raw: inout RawFile) {
         raw.created = true
     } else if line.hasPrefix("deleted file mode ") {
         raw.deleted = true
-    } else if let match = line.firstMatch(of: /^Binary files (.*) and (.*) differ$/) {
-        raw.binaryPaths = (unquote(String(match.1)), unquote(String(match.2)))
+    } else if line.hasPrefix("Binary files ") || line == "GIT binary patch" {
+        raw.binary = true
+        if let match = line.firstMatch(of: /^Binary files (.*) and (.*) differ$/) {
+            raw.binaryPaths = (unquote(String(match.1)), unquote(String(match.2)))
+        }
     }
 }
 
 private func toFileDiff(_ raw: RawFile) -> FileDiff {
-    let pair: (String, String)? = if let from = raw.renameFrom, let to = raw.renameTo {
-        (from, to)
-    } else if let minus = raw.minus, let plus = raw.plus {
-        (minus, plus)
-    } else {
-        raw.binaryPaths ?? raw.header
+    let renamed: (String, String)? = if let from = raw.renameFrom, let to = raw.renameTo { (from, to) } else { nil }
+    let named: (String, String)? = if let minus = raw.minus, let plus = raw.plus { (minus, plus) } else { raw.binaryPaths ?? raw.header }
+    // Renames are written without prefixes.
+    let prefixed = renamed == nil && named.map { hasPrefixes(raw.header ?? $0) } == true
+    let (oldRaw, newRaw) = renamed ?? named ?? (devNull, devNull)
+    let normalize = { (path: String) -> String? in
+        if path == devNull { return nil }
+        return prefixed ? stripMnemonicPrefix(path) : path
     }
-    let (oldRaw, newRaw) = pair ?? (devNull, devNull)
     return FileDiff(
-        oldPath: raw.created || oldRaw == devNull ? nil : oldRaw,
-        newPath: raw.deleted || newRaw == devNull ? nil : newRaw,
-        hunks: raw.hunks
+        oldPath: raw.created ? nil : normalize(oldRaw),
+        newPath: raw.deleted ? nil : normalize(newRaw),
+        hunks: raw.hunks,
+        binary: raw.binary
     )
+}
+
+/// git's mnemonic prefixes (`a/`, `b/`, `c/`, `i/`, `w/`, `o/`), absent with `--no-prefix`.
+private func hasMnemonicPrefix(_ path: String) -> Bool {
+    path.wholeMatch(of: /[abciwo]\/.*/) != nil
+}
+
+private func stripMnemonicPrefix(_ path: String) -> String {
+    hasMnemonicPrefix(path) ? String(path.dropFirst(2)) : path
+}
+
+/// Prefixes are stripped only when every non-/dev/null side carries one.
+private func hasPrefixes(_ pair: (String, String)) -> Bool {
+    let sides = [pair.0, pair.1].filter { $0 != devNull }
+    return !sides.isEmpty && sides.allSatisfy(hasMnemonicPrefix)
 }
 
 private func headerPath(_ s: String) -> String {
@@ -145,7 +165,7 @@ private func headerPath(_ s: String) -> String {
     return s
 }
 
-/// Splits `x y`. Unquoted paths with spaces are resolved by assuming both sides name the same file.
+/// Splits `a/x b/x`. Unquoted paths with spaces are resolved by assuming both sides name the same file.
 private func splitGitHeader(_ rest: String) -> (String, String)? {
     let chars = Array(rest)
     if rest.hasPrefix("\"") {
@@ -160,7 +180,9 @@ private func splitGitHeader(_ rest: String) -> (String, String)? {
     if spaces.count == 1 {
         return (String(chars[..<spaces[0]]), String(chars[(spaces[0] + 1)...]))
     }
-    return spaces.lazy.map { (String(chars[..<$0]), String(chars[($0 + 1)...])) }.first { $0.0 == $0.1 }
+    return spaces.lazy.map { (String(chars[..<$0]), String(chars[($0 + 1)...])) }.first { a, b in
+        a == b || (hasPrefixes((a, b)) && stripMnemonicPrefix(a) == stripMnemonicPrefix(b))
+    }
 }
 
 private func quotedEnd(_ chars: [Character]) -> Int {

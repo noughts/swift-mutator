@@ -2,7 +2,7 @@ import SwiftParser
 import SwiftSyntax
 
 // Scopes give mutants a position independent identity: functions are named by their path
-// (`Cart.total(for:)>map`), types by name, other top-level code by a content hash.
+// (`Cart.total(for:)>map`), types by name, other top-level statements by a content hash.
 
 /// Top-level code gets scope ids starting with `<top`; such scopes never qualify nested names.
 public func isTopLevelScope(_ id: String) -> Bool { id.hasPrefix("<top") }
@@ -81,9 +81,7 @@ struct ScopeTracker {
             return qualify(name)
         }
         if let name = typeDeclName(node) { return qualify(name) }
-        if current == nil, isTopLevelStatement(node) {
-            return topLevelName(node) ?? "<top:\(hashOf(node).prefix(6))>"
-        }
+        if current == nil, isTopLevelStatement(node) { return "<top:\(hashOf(node).prefix(6))>" }
         return nil
     }
 
@@ -105,12 +103,6 @@ private func isTopLevelStatement(_ node: Syntax) -> Bool {
     guard let item = node.as(CodeBlockItemSyntax.self), item.parent?.parent?.is(SourceFileSyntax.self) == true else { return false }
     let inner = Syntax(item.item)
     return !isFunctionLike(inner) && !isTypeDecl(inner)
-}
-
-private func topLevelName(_ node: Syntax) -> String? {
-    guard let item = node.as(CodeBlockItemSyntax.self), let variable = item.item.as(VariableDeclSyntax.self),
-          variable.bindings.count == 1, let pattern = variable.bindings.first?.pattern.as(IdentifierPatternSyntax.self) else { return nil }
-    return pattern.identifier.text
 }
 
 /// Position independent name of a function-like node, or nil when anonymous.

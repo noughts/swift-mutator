@@ -1,20 +1,9 @@
 import Testing
 @testable import MutatorCore
 
-private func emitted(_ source: String, excluding: (Mutant) -> Bool = { _ in false }) -> (Analysis, Emission) {
-    let analysis = analyze(file: "f.swift", source: source)
-    let excluded = Set(analysis.mutants.filter(excluding).map(\.key))
-    return (analysis, emit(Array(source.utf8), analysis, excluding: excluded))
-}
-
 /// The instrumented code without the appended runtime.
 private func body(_ emission: Emission) -> String {
     String(emission.code.split(separator: "\n\n// ---- swift-mutator runtime", maxSplits: 1, omittingEmptySubsequences: false)[0])
-}
-
-/// Byte offset of the first occurrence of `needle`.
-func byteOffset(of needle: String, in text: String) -> Int {
-    text.utf8.distance(from: text.startIndex, to: text.firstRange(of: needle)!.lowerBound)
 }
 
 @Suite struct EmitTests {

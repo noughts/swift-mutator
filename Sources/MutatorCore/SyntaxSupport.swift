@@ -22,10 +22,23 @@ func parenthesized(_ node: Syntax) -> ExprSyntax? {
     return only.expression
 }
 
+/// A plain `as` coercion: it keeps the value (unlike `as?` / `as!`).
+private func coerced(_ node: Syntax) -> ExprSyntax? {
+    guard let cast = node.as(AsExprSyntax.self), cast.questionOrExclamationMark == nil else { return nil }
+    return cast.expression
+}
+
 /// Strip parentheses.
 func unwrapParens(_ expr: ExprSyntax) -> ExprSyntax {
     var current = expr
     while let inner = parenthesized(Syntax(current)) { current = inner }
+    return current
+}
+
+/// Strip transparent wrappers (parentheses, plain `as`): the expression whose value it is.
+func unwrap(_ expr: ExprSyntax) -> ExprSyntax {
+    var current = expr
+    while let inner = parenthesized(Syntax(current)) ?? coerced(Syntax(current)) { current = inner }
     return current
 }
 
@@ -43,16 +56,21 @@ func unwrapEffects(_ expr: ExprSyntax) -> ExprSyntax {
     }
 }
 
-/// The outermost parenthesized wrapper around a node (the node itself when unwrapped): its parent
-/// is the position the node really occupies.
+/// The outermost transparent wrapper around a node (the node itself when unwrapped): parentheses
+/// and plain `as` coercions keep the value. Its parent is the position the node really occupies.
 func outermost(_ node: Syntax) -> Syntax {
     var current = node
-    while let element = current.parent, element.is(LabeledExprSyntax.self),
-          let list = element.parent, list.is(LabeledExprListSyntax.self),
-          let tuple = list.parent, parenthesized(tuple) != nil {
-        current = tuple
+    while true {
+        if let element = current.parent, element.is(LabeledExprSyntax.self),
+           let list = element.parent, list.is(LabeledExprListSyntax.self),
+           let tuple = list.parent, parenthesized(tuple) != nil {
+            current = tuple
+        } else if current.isKeyPath(\AsExprSyntax.expression), let cast = current.parent, coerced(cast) != nil {
+            current = cast
+        } else {
+            return current
+        }
     }
-    return current
 }
 
 /// Functions, initializers, accessors, closures: nodes whose body runs on its own.
@@ -87,6 +105,14 @@ func isTypeDecl(_ node: Syntax) -> Bool { typeDeclName(node) != nil }
 /// `(_:to:)`: argument labels as in Swift's own function names.
 func parameterLabels(_ parameters: FunctionParameterListSyntax) -> String {
     "(" + parameters.map { "\($0.firstName.text):" }.joined() + ")"
+}
+
+/// A type written like a collection literal: `[Int]()`, `[String: Int](...)`, `[Item].self`, `[Int].init`.
+func isTypeLiteral(_ node: Syntax) -> Bool {
+    guard node.is(ArrayExprSyntax.self) || node.is(DictionaryExprSyntax.self) else { return false }
+    if node.isKeyPath(\FunctionCallExprSyntax.calledExpression) { return true }
+    guard node.isKeyPath(\MemberAccessExprSyntax.base), let member = node.parent?.as(MemberAccessExprSyntax.self) else { return false }
+    return ["self", "init"].contains(member.declName.baseName.text)
 }
 
 /// `if` / `switch` used as a statement rather than as a value.

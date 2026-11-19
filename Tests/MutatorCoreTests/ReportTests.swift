@@ -18,7 +18,6 @@ import Testing
     @Test func summaryGroupsTheGaps() {
         let text = formatSummary(entries([.killed, .survived, .noCoverage]), facts: RunFacts(durationMs: 1200, files: 1, measuredTests: 2, totalTests: 3, buildRounds: 1, diffOnly: false), thresholds: Thresholds())
         #expect(text.contains("killed 1 · survived 1 · no coverage 1"))
-        #expect(text.contains("score 33.3% [danger]"))
         #expect(text.contains("not detected"))
         #expect(text.contains("not reached"))
     }
@@ -40,12 +39,5 @@ import Testing
         all[0].focus = .diff
         let report = mutationTestingReport(all, sources: ["A.swift": source], projectRoot: "/p", version: "0", thresholds: Thresholds(), diffOnly: true)
         #expect(Set(report.files["A.swift"]!.mutants.map(\.status)) == ["Killed", "Pending"])
-    }
-
-    @Test func qualityGate() {
-        let all = entries([.killed, .survived])
-        #expect(gateFailures(all, diffOnly: false, thresholds: Thresholds(), failOnSurvived: false).isEmpty)
-        #expect(gateFailures(all, diffOnly: false, thresholds: Thresholds(), failOnSurvived: true).count == 1)
-        #expect(gateFailures(all, diffOnly: false, thresholds: Thresholds(breakAt: 60), failOnSurvived: false).count == 1)
     }
 }

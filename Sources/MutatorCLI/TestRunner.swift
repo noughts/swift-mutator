@@ -79,6 +79,15 @@ private func bundle(for module: String, in bundles: [TestBundle]) -> TestBundle?
     bundles.first { $0.name == module } ?? (bundles.count == 1 ? bundles[0] : bundles.first { $0.name.hasSuffix("PackageTests") })
 }
 
+/// The environment of a test process: ours without mutator variables, plus `extra`.
+func testEnvironment(_ extra: [String: String]) -> [String: String] {
+    var env = ProcessInfo.processInfo.environment.filter { !$0.key.hasPrefix("SWIFT_MUTATOR_") }
+    env.merge(extra) { _, new in new }
+    // Crashing mutants are common; the runtime backtracer would make each crash slow.
+    env["SWIFT_BACKTRACE"] = "enable=no"
+    return env
+}
+
 struct TestRunner: Sendable {
     let sandbox: URL
     let bundles: [TestBundle]
@@ -89,11 +98,7 @@ struct TestRunner: Sendable {
         self.sandbox = sandbox
         self.bundles = bundles
         self.toolchain = toolchain
-        var env = ProcessInfo.processInfo.environment.filter { !$0.key.hasPrefix("SWIFT_MUTATOR_") }
-        env.merge(toolchain.environment) { _, new in new }
-        // Crashing mutants are common; the runtime backtracer would make each crash slow.
-        env["SWIFT_BACKTRACE"] = "enable=no"
-        baseEnvironment = env
+        baseEnvironment = testEnvironment(toolchain.environment)
     }
 
     /// Runs `ids` in order of first appearance per bundle and library; stops at the first failing group.

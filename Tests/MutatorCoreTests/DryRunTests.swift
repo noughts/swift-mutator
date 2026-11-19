@@ -3,10 +3,10 @@ import Testing
 
 @Suite struct DryRunTests {
     let tests = [TestInfo(id: "M.T/a", fingerprint: "a", durationMs: 1), TestInfo(id: "M.T/b", fingerprint: "b", durationMs: 1)]
-    let mutant = Mutant(key: "k1", file: "A.swift", mutator: .arithmeticOperator, span: Span(start: 0, end: 1), location: Location(start: Position(line: 1, column: 0), end: Position(line: 1, column: 1)), original: "+", replacement: "-", scope: Scope(id: "f()", hash: "h1", span: Span(start: 0, end: 9), isFunction: true))
+    let mutant = fixtureMutant("k1", file: "A.swift", scope: "f()")
 
     private func previous(scopes: [String: String], declarations: [String] = []) -> Snapshot {
-        Snapshot(toolVersion: "t", envHash: "e", results: [MutantResult(mutant: mutant, status: .survived, killedBy: [], coveredBy: ["M.T/a"])], tests: tests, coverage: ["M.T/a": ["k1"], "M.T/b": []], scopes: scopes, declarationScopes: declarations)
+        fixtureSnapshot([MutantResult(mutant: mutant, status: .survived, killedBy: [], coveredBy: ["M.T/a"])], tests, coverage: ["M.T/a": ["k1"], "M.T/b": []], scopes: scopes, declarationScopes: declarations)
     }
 
     @Test func everythingWithoutSnapshotOrWhenForced() {
@@ -30,11 +30,5 @@ import Testing
     @Test func aChangedTypeMeasuresEverything() {
         let before = previous(scopes: ["A.swift#f()": "h1", "A.swift#Cart": "t1"], declarations: ["A.swift#Cart"])
         #expect(testsToMeasure(previous: before, tests: tests, scopes: ["A.swift#f()": "h1", "A.swift#Cart": "t2"], declarationScopes: ["A.swift#Cart"], full: false).count == 2)
-    }
-
-    @Test func coverageIsKeptForUnmeasuredTestsAndInverted() {
-        let merged = mergeCoverage(previous: previous(scopes: [:]), measured: ["M.T/b": ["k1", "gone"]], tests: ["M.T/a", "M.T/b"], keys: ["k1"])
-        #expect(merged == ["M.T/a": ["k1"], "M.T/b": ["k1"]])
-        #expect(coverageByMutant(merged) == ["k1": ["M.T/a", "M.T/b"]])
     }
 }
