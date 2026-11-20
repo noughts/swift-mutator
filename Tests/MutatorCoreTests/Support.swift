@@ -25,7 +25,7 @@ func byteOffset(of needle: String, in text: String) -> Int {
 let fixtureLocation = Location(start: Position(line: 1, column: 0), end: Position(line: 1, column: 1))
 
 func fixtureMutant(_ key: String, file: String = "a.swift", scope: String = "f", hash: String = "h1", span: Span = Span(start: 0, end: 1), scopeSpan: Span = Span(start: 0, end: 10), original: String = "+", replacement: String = "-", location: Location = fixtureLocation, ignored: String? = nil) -> Mutant {
-    Mutant(key: key, file: file, mutator: .arithmeticOperator, span: span, location: location, original: original, replacement: replacement, scope: Scope(id: scope, hash: hash, span: scopeSpan, isFunction: true), ignored: ignored)
+    Mutant(key: key, file: file, mutator: .arithmeticOperator, span: span, location: location, original: original, replacement: replacement, scope: Scope(id: scope, hash: hash, span: scopeSpan, kind: .function), ignored: ignored)
 }
 
 func fixtureSnapshot(_ results: [MutantResult], _ tests: [TestInfo], toolVersion: String = "v1", envHash: String = "e1", coverage: [String: [String]] = [:], scopes: [String: String] = [:], declarationScopes: [String] = []) -> Snapshot {

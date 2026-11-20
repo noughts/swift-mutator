@@ -198,12 +198,87 @@ func isVoid(_ returnClause: ReturnClauseSyntax?) -> Bool {
 private func canEmpty(_ block: CodeBlockSyntax) -> Bool {
     guard let owner = block.parent else { return false }
     switch owner.kind {
-    case .ifExpr: return !isValueBranching(owner)
-    case .whileStmt, .forStmt, .repeatStmt, .doStmt, .catchClause, .deferStmt, .deinitializerDecl: return true
+    case .ifExpr: return !isValueBranching(owner) && !breaksFlow(block, owner: owner)
+    case .whileStmt, .forStmt, .repeatStmt, .doStmt, .catchClause, .deferStmt: return !breaksFlow(block, owner: owner)
+    case .deinitializerDecl: return true
     case .functionDecl: return isVoid(owner.as(FunctionDeclSyntax.self)?.signature.returnClause)
     case .accessorDecl: return ["set", "willSet", "didSet"].contains(owner.as(AccessorDeclSyntax.self)?.accessorSpecifier.text ?? "")
     default: return false
     }
+}
+
+/// Emptying the block leaves a path that returns no value, or a value used uninitialized: the
+/// mutant does not compile. Swift checks this only once the module type-checks, so leaving it to
+/// the compiler costs a build round of its own.
+private func breaksFlow(_ block: CodeBlockSyntax, owner: Syntax) -> Bool {
+    let function = sequence(first: owner) { $0.parent }.first(where: isFunctionLike)
+    let uninitialized = Set(localNodes(function ?? owner.root).compactMap(uninitializedName))
+    // A branch that exits keeps a later use from seeing a value its siblings initialize.
+    let completes = owner.is(DoStmtSyntax.self) || owner.is(CatchClauseSyntax.self) || owner.as(IfExprSyntax.self)?.elseBody != nil
+    if completes, alwaysExits(block), endsValueBody(owner) || !uninitialized.isEmpty { return true }
+    let assigned = Set(localNodes(Syntax(block)).compactMap(assignedName))
+    if assigned.isEmpty { return false }
+    // An initializer must set every stored property, with or without `self.`.
+    if function?.is(InitializerDeclSyntax.self) == true { return true }
+    return !assigned.isDisjoint(with: uninitialized)
+}
+
+/// The block ends in `return` or `throw`, or in an `if` / `else` whose branches all do.
+private func alwaysExits(_ block: CodeBlockSyntax) -> Bool {
+    guard let last = block.statements.last?.item else { return false }
+    if last.is(ReturnStmtSyntax.self) || last.is(ThrowStmtSyntax.self) { return true }
+    guard let ifExpr = last.as(ExpressionStmtSyntax.self)?.expression.as(IfExprSyntax.self) else { return false }
+    return ifAlwaysExits(ifExpr)
+}
+
+private func ifAlwaysExits(_ ifExpr: IfExprSyntax) -> Bool {
+    guard alwaysExits(ifExpr.body), let elseBody = ifExpr.elseBody else { return false }
+    switch elseBody {
+    case let .codeBlock(block): return alwaysExits(block)
+    case let .ifExpr(nested): return ifAlwaysExits(nested)
+    }
+}
+
+/// `statement` (an `if`, `do` or `catch`) is the last thing a body that must not fall through runs
+/// (it returns a value, or is a `guard` body), so every path through it must exit. When the body is
+/// not recognized, true: a mutant that does not compile costs a build round and its function's
+/// other mutants, a mutant not made costs only itself.
+private func endsValueBody(_ statement: Syntax) -> Bool {
+    // An `else if` ends where its `if` does, a `catch` where its `do` does.
+    if let parent = statement.parent, parent.is(IfExprSyntax.self) { return endsValueBody(parent) }
+    if statement.is(CatchClauseSyntax.self), let doStmt = statement.parent?.parent { return endsValueBody(doStmt) }
+    guard let item = statement.parent?.as(CodeBlockItemSyntax.self) ?? statement.parent?.parent?.as(CodeBlockItemSyntax.self),
+          let list = item.parent?.as(CodeBlockItemListSyntax.self), let body = list.parent else { return true }
+    if list.last?.id != item.id || body.is(SourceFileSyntax.self) { return false }
+    // A closure's return type is not known here: it may return a value.
+    if body.is(ClosureExprSyntax.self) || returnsValue(body) { return true }
+    // A `case` ends where its `switch` does.
+    if body.is(SwitchCaseSyntax.self), let switchExpr = body.parent?.parent { return endsValueBody(switchExpr) }
+    guard body.is(CodeBlockSyntax.self), let owner = body.parent else { return true }
+    switch owner.kind {
+    case .ifExpr, .doStmt, .catchClause: return endsValueBody(owner)
+    case .functionDecl, .initializerDecl, .deinitializerDecl, .accessorDecl, .whileStmt, .forStmt, .repeatStmt, .deferStmt: return false
+    default: return true
+    }
+}
+
+/// Nodes under `node` outside nested closures and functions, where its locals are not.
+private func localNodes(_ node: Syntax) -> [Syntax] {
+    node.children(viewMode: .sourceAccurate).filter { !isFunctionLike($0) }.flatMap { [$0] + localNodes($0) }
+}
+
+/// `x` of `x = ...` and `self.x = ...`.
+private func assignedName(_ node: Syntax) -> String? {
+    guard let infix = node.as(InfixOperatorExprSyntax.self), infix.operator.is(AssignmentExprSyntax.self) else { return nil }
+    if let name = infix.leftOperand.as(DeclReferenceExprSyntax.self)?.baseName.text { return name }
+    guard let member = infix.leftOperand.as(MemberAccessExprSyntax.self), member.base?.as(DeclReferenceExprSyntax.self)?.baseName.text == "self" else { return nil }
+    return member.declName.baseName.text
+}
+
+/// `x` of `let x: Int` / `var x: Int`, declared without a value.
+private func uninitializedName(_ node: Syntax) -> String? {
+    guard let binding = node.as(PatternBindingSyntax.self), binding.initializer == nil, binding.accessorBlock == nil else { return nil }
+    return binding.pattern.as(IdentifierPatternSyntax.self)?.identifier.text
 }
 
 private let blockStatement: Mutator = { node, _ in

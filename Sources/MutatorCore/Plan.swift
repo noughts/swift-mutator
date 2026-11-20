@@ -52,11 +52,11 @@ private func testsOfChangedScopes(_ previous: Snapshot, _ mutants: [Mutant]) -> 
     return Set(previous.results.filter { current[$0.scopeKey] != $0.scopeHash }.flatMap(\.coveredBy))
 }
 
-/// Mutants that did not compile before, in a function unchanged since: left out of the build
-/// from the start instead of being found again, a build round each.
-public func knownCompileErrors(previous: Snapshot?, mutants: [Mutant]) -> Set<String> {
-    let hashes = Dictionary(mutants.map { ($0.key, $0.scope.hash) }, uniquingKeysWith: { first, _ in first })
-    return Set((previous?.results ?? []).filter { $0.status == .compileError && hashes[$0.key] == $0.scopeHash }.map(\.key))
+/// Mutants that did not compile before (`recorded`: key -> hash of its scope then), in a function
+/// unchanged since: left out of the build from the start instead of being found again, a build
+/// round each.
+public func knownCompileErrors(recorded: [String: String], mutants: [Mutant]) -> Set<String> {
+    Set(mutants.filter { recorded[$0.key] == $0.scope.hash }.map(\.key))
 }
 
 public func plan(_ input: PlanInput) -> [PlanEntry] {

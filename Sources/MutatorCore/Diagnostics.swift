@@ -51,9 +51,7 @@ public struct Blame: Sendable {
     public let unattributed: [CompilerError]
 }
 
-/// The mutants to leave out so that `errors` (paths relative, as the keys of `files`) go away:
-/// the mutant whose code holds the error, else every mutant of the innermost switch around it,
-/// else of the innermost function around it, else of the file.
+/// The mutants to leave out so that `errors` (paths relative, as the keys of `files`) go away.
 public func blame(_ errors: [CompilerError], files: [String: InstrumentedFile]) -> Blame {
     var keys = Set<String>()
     var unattributed: [CompilerError] = []
@@ -65,22 +63,30 @@ public func blame(_ errors: [CompilerError], files: [String: InstrumentedFile]) 
         }
         let index = indexes[error.path] ?? LineIndex(Array(file.emission.code.utf8))
         indexes[error.path] = index
-        let offset = index.offset(line: error.line, column: error.column - 1)
-        let emission = file.emission
-        if let hit = emission.mutantSpans.filter({ $0.value.contains(offset: offset) }).min(by: { $0.value.end - $0.value.start < $1.value.end - $1.value.start }) {
-            keys.insert(hit.key)
-            continue
-        }
-        if let placement = emission.placementSpans.filter({ $0.span.contains(offset: offset) }).min(by: { $0.span.end - $0.span.start < $1.span.end - $1.span.start }) {
-            keys.formUnion(placement.keys)
-            continue
-        }
-        let placed = Set(emission.keys)
-        let source = emission.sourceOffset(offset)
-        let function = file.analysis.scopes.filter { $0.isFunction && $0.span.start <= source && source <= $0.span.end }
-            .min { $0.span.end - $0.span.start < $1.span.end - $1.span.start }
-        let inFunction = function.map { scope in file.analysis.mutants.filter { placed.contains($0.key) && scope.span.contains($0.span) }.map(\.key) } ?? []
-        keys.formUnion(inFunction.isEmpty ? emission.keys : inFunction)
+        keys.formUnion(suspects(at: index.offset(line: error.line, column: error.column - 1), in: file))
     }
     return Blame(keys: keys, unattributed: unattributed)
+}
+
+/// The placed mutants an error at `offset` (of the instrumented code) is blamed on: the mutant
+/// whose code holds it, else the first of these that has any: the smallest statement around it
+/// (a type error shows anywhere in the expression a mutant broke), the innermost function around
+/// it, the outermost one, the file. Blamed mutants are left out of the next build, so an error
+/// that stays is blamed on the next of these, a build round later.
+private func suspects(at offset: Int, in file: InstrumentedFile) -> [String] {
+    let emission = file.emission
+    let size = { (span: Span) in span.end - span.start }
+    if let hit = emission.mutantSpans.filter({ $0.value.contains(offset: offset) }).min(by: { size($0.value) < size($1.value) }) {
+        return [hit.key]
+    }
+    let placed = Set(emission.keys)
+    let mutants = file.analysis.mutants.filter { placed.contains($0.key) }
+    let source = emission.sourceOffset(offset)
+    let around = { (spans: [Span]) in spans.filter { $0.start <= source && source <= $0.end }.sorted { size($0) < size($1) } }
+    let functions = around(file.analysis.scopes.filter(\.isFunction).map(\.span))
+    for span in [around(file.analysis.statements).first, functions.first, functions.last].compactMap({ $0 }) {
+        let inside = mutants.filter { span.contains($0.span) }.map(\.key)
+        if !inside.isEmpty { return inside }
+    }
+    return emission.keys
 }

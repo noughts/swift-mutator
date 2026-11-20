@@ -2,7 +2,14 @@ import SwiftParser
 import SwiftSyntax
 
 // The sandbox copy of a package lives elsewhere: local dependencies given by relative paths
-// (`.package(path: "../Shared")`) are rewritten to absolute paths.
+// (`.package(path: "../Shared")`) are rewritten to absolute paths, and sources are compiled as if
+// they were at their original path.
+
+/// `code` compiled as the file at `path`: `#filePath` (tests finding fixtures next to them or up
+/// the tree) and compiler diagnostics name the original file, with the original line numbers.
+public func atOriginalPath(_ code: String, path: String) -> String {
+    "#sourceLocation(file: \(quoted(path)), line: 1)\n" + code
+}
 
 /// `path` resolved against `base`, with `.` and `..` removed.
 public func resolvePath(_ path: String, base: String) -> String {

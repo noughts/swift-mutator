@@ -21,9 +21,9 @@ import Testing
 
     @Test func compileErrorsAreKnownWhileTheirFunctionIsUnchanged() throws {
         let m = try #require(analyzed("func f(_ a: Int) -> Bool { a > 1 }").first)
-        let previous = fixtureSnapshot([MutantResult(mutant: m, status: .compileError, killedBy: [], coveredBy: [])], [])
-        #expect(knownCompileErrors(previous: previous, mutants: [m]) == [m.key])
+        let recorded = [m.key: m.scope.hash]
+        #expect(knownCompileErrors(recorded: recorded, mutants: [m]) == [m.key])
         let edited = try #require(analyzed("func f(_ a: Int) -> Swift.Bool { a > 1 }").first { $0.key == m.key })
-        #expect(knownCompileErrors(previous: previous, mutants: [edited]).isEmpty)
+        #expect(knownCompileErrors(recorded: recorded, mutants: [edited]).isEmpty)
     }
 }
