@@ -1,15 +1,17 @@
 // Diff-driven dry run: only tests whose coverage may have changed are measured again.
 
 /// Tests whose coverage must be measured again; the others keep the coverage recorded in `previous`.
-/// - Every test without a valid snapshot, with `full`, or when a declaration-level scope (a type, a
-///   global) changed: members added or removed can change dispatch anywhere.
+/// - Every test without a valid snapshot, with `full`, when a declaration-level scope (a type, an
+///   extension, a global) changed or disappeared, or when an extension appeared: members and
+///   conformances added or removed can change dispatch anywhere.
 /// - Otherwise new and changed tests, and tests that covered a function whose hash changed or that
-///   disappeared. A new function is reached only through an edited caller or test, measured anyway.
-public func testsToMeasure(previous: Snapshot?, tests: [TestInfo], scopes: [String: String], declarationScopes: Set<String>, full: Bool) -> Set<String> {
+///   disappeared. A new function, type or global is reached only through an edited caller or test,
+///   measured anyway.
+public func testsToMeasure(previous: Snapshot?, tests: [TestInfo], scopes: [String: String], declarationScopes: Set<String>, extensions: Set<String>, full: Bool) -> Set<String> {
     let all = Set(tests.map(\.id))
     guard let previous, !full else { return all }
     let before = Set(previous.declarationScopes)
-    if before != declarationScopes || declarationScopes.contains(where: { previous.scopes[$0] != scopes[$0] }) { return all }
+    if before.contains(where: { previous.scopes[$0] != scopes[$0] }) || !declarationScopes.subtracting(before).isDisjoint(with: extensions) { return all }
     var out = changedTests(previous, tests).intersection(all)
     let changedScopes = Set(previous.scopes.filter { scopes[$0.key] != $0.value }.map(\.key))
     let scopeOf = Dictionary(previous.results.map { ($0.key, $0.scopeKey) }, uniquingKeysWith: { first, _ in first })

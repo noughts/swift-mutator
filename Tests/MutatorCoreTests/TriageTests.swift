@@ -26,4 +26,10 @@ import Testing
         let edited = try #require(analyzed("func f(_ a: Int) -> Swift.Bool { a > 1 }").first { $0.key == m.key })
         #expect(knownCompileErrors(previous: previous, mutants: [edited]).isEmpty)
     }
+
+    @Test func compileErrorsRecordedByAnUnfinishedRunAreKnownToo() throws {
+        let m = try #require(analyzed("func f(_ a: Int) -> Bool { a > 1 }").first)
+        #expect(knownCompileErrors(previous: nil, recorded: [m.key: m.scope.hash], mutants: [m]) == [m.key])
+        #expect(knownCompileErrors(previous: nil, recorded: [m.key: "an older hash"], mutants: [m]).isEmpty)
+    }
 }

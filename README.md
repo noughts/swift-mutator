@@ -100,7 +100,7 @@ Mutants in code that only does logging (`print`, `debugPrint`, `NSLog`, `os_log`
 analyze (pure)  parse with swift-syntax and fold operators with SwiftOperators → mutant candidates, scopes, placement
 emit (pure)     generate source with mutants embedded as switches, plus a per-file runtime
 sandbox         sync the package into .mutator/sandbox (only files whose content changed are written, so builds stay incremental)
-build           swift build --build-tests; on failure, attribute the diagnostics to mutants, exclude them, and rebuild
+build           swift build --build-tests --build-system native; on failure, attribute the diagnostics to mutants, exclude them, and rebuild
 dry run         run tests one at a time and record the keys of the mutants reached (only the tests affected by changes)
 plan (pure)     compare with the snapshot and decide what to reuse, what is unreached, and what to run (test order and timeouts)
 run             run the covering tests for each mutant (in parallel); record the failing tests as killedBy
@@ -108,10 +108,11 @@ report          text summary, plus JSON / HTML in the mutation-testing-elements 
 ```
 
 - **Switch shapes**: An expression becomes `(__mutator_on(1) ? (a - b) : (a + b))`, a statement `if __mutator_on(2) { } else { f() }`, and a block `{ if __mutator_on(3) { return 0 } else { ... } }`. Implicit returns of single-expression bodies get an explicit `return`. `__mutator_on` is a per-file `fileprivate` runtime that reads `SWIFT_MUTATOR_ACTIVE` to determine the active mutant; during a dry run (`SWIFT_MUTATOR_COVERAGE`) it records the mutants reached and writes them out when the process exits.
-- **Attributing non-compiling mutants**: Narrowed down in order: if the diagnostic is inside mutated code, that mutant; if it is inside a switch, that switch's mutants; if it is inside a function, that function's mutants. A mutant that has once been `CompileError` is excluded up front until the function's hash changes (to reduce build round trips).
-- **Running tests**: `swift test` locks `.build` and can't run in parallel, so the built test bundles are launched directly. XCTest is run with `xctest -XCTest <ids>`, and swift-testing is run through SwiftPM's `swiftpm-testing-helper` with event stream output, which identifies the tests that failed or crashed. Each run takes about 0.03–0.05 seconds (about 0.5 seconds through `swift test`).
-- **Incremental dry runs**: If a declaration-level scope such as a type or a global changes, all tests are re-measured (adding members can change dispatch). Otherwise, only new or changed tests, and the tests that covered functions whose hash changed (or that disappeared), are re-measured.
-- **Test fingerprints**: Computed from the test function itself, the rest of the type that contains the test (`setUp` and so on), shared code that contains no tests (helper types and functions), and the test module's resources. Adding a test or a test class doesn't change the fingerprints of other tests.
+- **The sandbox as the package in place**: Every Swift source is compiled at its original path (`#sourceLocation(file:line:)`), so `#filePath` and diagnostics name the original file: tests that look for fixtures next to them, or for an app's resources up the tree, find them. Symbolic links are copied as the files they point to (a test target may share a file of the app outside the package).
+- **Attributing non-compiling mutants**: If the diagnostic is inside mutated code, that mutant; otherwise the mutants of the smallest statement around it (a type error shows anywhere in the expression a mutant broke), else the file's. Blamed mutants are left out of the next build, so an error that stays is blamed on the next statement out. The native build system is used because Swift Build stops starting compiles at the first failure, so a round would find only a few files' errors. Found mutants are written to `.mutator/compile-errors.json` after each round, and are excluded up front until their function's hash changes (to reduce build round trips). Blocks whose emptying cannot compile (a `let` initialized in each branch, an `if`/`else` whose branches all return) are not emptied, since Swift reports those only after type checking succeeds, a round of their own.
+- **Running tests**: `swift test` locks `.build` and can't run in parallel, so the built test bundles are launched directly, each process with a home and temporary directory of its own (`HOME`, `CFFIXED_USER_HOME`, `TMPDIR`): tests of a `.serialized` suite run in parallel processes, and a mutant must not leave files in the user's home. XCTest is run with `xctest -XCTest <ids>`, and swift-testing is run through SwiftPM's `swiftpm-testing-helper` with event stream output, which identifies the tests that failed or crashed. Each run takes about 0.03–0.05 seconds (about 0.5 seconds through `swift test`).
+- **Incremental dry runs**: If a declaration-level scope such as a type, an extension, or a global changes or disappears, or an extension appears, all tests are re-measured (members and conformances can change dispatch). Otherwise, only new or changed tests, and the tests that covered functions whose hash changed (or that disappeared), are re-measured; a new function, type, or global is reached only through edited code.
+- **Test fingerprints**: Computed from the test function itself, the rest of the type that contains the test (`setUp` and so on), the `private` declarations of its file, shared code that contains no tests (other helper types and functions), and the test module's resources. Adding or editing a test (in a type or at the top level) doesn't change the fingerprints of other tests.
 
 ## Mutators
 
@@ -127,7 +128,7 @@ report          text summary, plus JSON / HTML in the mutation-testing-elements 
 | ArrayDeclaration | `[a, b]` → `[]` | Doesn't add elements to empty arrays (the element type can't be determined) |
 | DictionaryLiteral | `["a": 1]` → `[:]` | Counterpart of ObjectLiteral |
 | StringLiteral | `"abc"` → `""`, `""` → `"Stryker was here!"` | Same |
-| BlockStatement | `{ ... }` → `{}` | Only if / loops / do / catch / defer, and functions, `set`, and `deinit` that return no value |
+| BlockStatement | `{ ... }` → `{}` | Only if / loops / do / catch / defer, and functions, `set`, and `deinit` that return no value; not blocks whose emptying cannot compile |
 | CallExpression | `cache.clear()` (statement) → removed | Skips statements that contain other mutants, implicit returns, `fatalError`, and so on |
 | MethodExpression | Removes `filter` / `sorted` / `reversed` / `trimmingCharacters`; `hasPrefix` ↔ `hasSuffix`, `lowercased` ↔ `uppercased`, `min` ↔ `max`, `first` ↔ `last`, `prefix` ↔ `suffix`, `dropFirst` ↔ `dropLast`, `allSatisfy` ↔ `contains` (trailing closures only) | Adapted to Swift APIs |
 | OptionalChaining | `a?.b` → `a!.b` | The switch wraps the whole chain (the type is promoted to Optional) |
@@ -161,7 +162,7 @@ Weak mutation (classifying mutants that don't infect program state without runni
 
 ## Limitations
 
-- Tests run in parallel, one process each (`-j`). If tests that share files or ports interfere with each other, use `-j 1`.
+- Tests run in parallel, one process each (`-j`), each with its own home directory. If tests that share other resources (files elsewhere, ports) interfere with each other, use `-j 1`.
 - The sandbox builds the whole package on the first run. After that, only files whose instrumented output changed are recompiled.
 - A mutant once judged `CompileError` isn't rechecked until its enclosing function changes.
 - On macOS, a crash report may be generated for each mutant that crashes.

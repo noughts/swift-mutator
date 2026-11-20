@@ -198,12 +198,74 @@ func isVoid(_ returnClause: ReturnClauseSyntax?) -> Bool {
 private func canEmpty(_ block: CodeBlockSyntax) -> Bool {
     guard let owner = block.parent else { return false }
     switch owner.kind {
-    case .ifExpr: return !isValueBranching(owner)
-    case .whileStmt, .forStmt, .repeatStmt, .doStmt, .catchClause, .deferStmt, .deinitializerDecl: return true
+    case .ifExpr: return !isValueBranching(owner) && !breaksFlow(block, owner: owner)
+    case .whileStmt, .forStmt, .repeatStmt, .doStmt, .catchClause, .deferStmt: return !breaksFlow(block, owner: owner)
+    case .deinitializerDecl: return true
     case .functionDecl: return isVoid(owner.as(FunctionDeclSyntax.self)?.signature.returnClause)
     case .accessorDecl: return ["set", "willSet", "didSet"].contains(owner.as(AccessorDeclSyntax.self)?.accessorSpecifier.text ?? "")
     default: return false
     }
+}
+
+/// Emptying the block leaves a path that returns no value, or a value used uninitialized: the
+/// mutant does not compile. Swift checks this only once the module type-checks, so leaving it to
+/// the compiler costs a build round of its own.
+private func breaksFlow(_ block: CodeBlockSyntax, owner: Syntax) -> Bool {
+    let completes = owner.is(DoStmtSyntax.self) || owner.is(CatchClauseSyntax.self) || owner.as(IfExprSyntax.self)?.elseBody != nil
+    if completes, alwaysExits(block) { return true }
+    let assigned = assignedNames(Syntax(block))
+    if assigned.isEmpty { return false }
+    let function = sequence(first: owner) { $0.parent }.first(where: isFunctionLike)
+    // An initializer must set every stored property, with or without `self.`.
+    if function?.is(InitializerDeclSyntax.self) == true { return true }
+    return !assigned.isDisjoint(with: uninitializedNames(in: function ?? owner.root))
+}
+
+/// The block ends in `return` or `throw`, or in an `if` / `else` whose branches all do.
+private func alwaysExits(_ block: CodeBlockSyntax) -> Bool {
+    guard let last = block.statements.last?.item else { return false }
+    if last.is(ReturnStmtSyntax.self) || last.is(ThrowStmtSyntax.self) { return true }
+    guard let ifExpr = last.as(ExpressionStmtSyntax.self)?.expression.as(IfExprSyntax.self) ?? last.as(IfExprSyntax.self) else { return false }
+    return ifAlwaysExits(ifExpr)
+}
+
+private func ifAlwaysExits(_ ifExpr: IfExprSyntax) -> Bool {
+    guard alwaysExits(ifExpr.body), let elseBody = ifExpr.elseBody else { return false }
+    switch elseBody {
+    case let .codeBlock(block): return alwaysExits(block)
+    case let .ifExpr(nested): return ifAlwaysExits(nested)
+    }
+}
+
+/// Names assigned under `node` (`x = ...`, `self.x = ...`), outside nested closures and functions.
+private func assignedNames(_ node: Syntax) -> Set<String> {
+    var out = Set<String>()
+    for child in node.children(viewMode: .sourceAccurate) where !isFunctionLike(child) {
+        if let infix = child.as(InfixOperatorExprSyntax.self), infix.operator.is(AssignmentExprSyntax.self) {
+            let target = infix.leftOperand
+            if let name = target.as(DeclReferenceExprSyntax.self)?.baseName.text {
+                out.insert(name)
+            } else if let member = target.as(MemberAccessExprSyntax.self), member.base?.as(DeclReferenceExprSyntax.self)?.baseName.text == "self" {
+                out.insert(member.declName.baseName.text)
+            }
+        }
+        out.formUnion(assignedNames(child))
+    }
+    return out
+}
+
+/// Local constants and variables declared without a value (`let x: Int`) under `node`,
+/// outside nested closures and functions.
+private func uninitializedNames(in node: Syntax) -> Set<String> {
+    var out = Set<String>()
+    for child in node.children(viewMode: .sourceAccurate) where !isFunctionLike(child) {
+        if let binding = child.as(PatternBindingSyntax.self), binding.initializer == nil, binding.accessorBlock == nil,
+           let name = binding.pattern.as(IdentifierPatternSyntax.self)?.identifier.text {
+            out.insert(name)
+        }
+        out.formUnion(uninitializedNames(in: child))
+    }
+    return out
 }
 
 private let blockStatement: Mutator = { node, _ in

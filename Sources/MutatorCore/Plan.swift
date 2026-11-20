@@ -53,10 +53,12 @@ private func testsOfChangedScopes(_ previous: Snapshot, _ mutants: [Mutant]) -> 
 }
 
 /// Mutants that did not compile before, in a function unchanged since: left out of the build
-/// from the start instead of being found again, a build round each.
-public func knownCompileErrors(previous: Snapshot?, mutants: [Mutant]) -> Set<String> {
+/// from the start instead of being found again, a build round each. `recorded` (key -> scope
+/// hash) holds those found by runs that ended before writing a snapshot.
+public func knownCompileErrors(previous: Snapshot?, recorded: [String: String] = [:], mutants: [Mutant]) -> Set<String> {
     let hashes = Dictionary(mutants.map { ($0.key, $0.scope.hash) }, uniquingKeysWith: { first, _ in first })
-    return Set((previous?.results ?? []).filter { $0.status == .compileError && hashes[$0.key] == $0.scopeHash }.map(\.key))
+    let found = (previous?.results ?? []).filter { $0.status == .compileError }.map { ($0.key, $0.scopeHash) } + recorded.map { ($0.key, $0.value) }
+    return Set(found.filter { hashes[$0.0] == $0.1 }.map(\.0))
 }
 
 public func plan(_ input: PlanInput) -> [PlanEntry] {

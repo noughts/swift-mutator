@@ -47,15 +47,24 @@ func runMutation(_ options: Options) async throws -> Int32 {
     let envHash = try await environment
     let previous = readSnapshot(snapshotURL)?.valid(toolVersion: toolVersion, envHash: envHash)
 
-    // 3. Build with every mutant switched in; drop the ones that do not compile, rebuild.
-    var excluded = knownCompileErrors(previous: previous, mutants: mutants)
+    // 3. Build with every mutant switched in; drop the ones that do not compile, rebuild. Every
+    //    source is compiled at its original path (`atOriginalPath`), and each round's findings are
+    //    recorded at once, so a run that stops later does not find them again.
+    let recordURL = mutatorDir.appendingPathComponent("compile-errors.json")
+    var excluded = knownCompileErrors(previous: previous, recorded: readCompileErrors(recordURL, envHash: envHash), mutants: mutants)
+    let plain = try Dictionary(uniqueKeysWithValues: Set(package.targets.flatMap(\.swiftSources)).subtracting(files).map {
+        ($0, try String(contentsOf: root.appendingPathComponent($0), encoding: .utf8))
+    })
     let manifests = try fm.contentsOfDirectory(atPath: root.path).filter { $0 == "Package.swift" || ($0.hasPrefix("Package@swift-") && $0.hasSuffix(".swift")) }
     var instrumented: [String: InstrumentedFile] = [:]
     var rounds = 0
     while true {
         rounds += 1
         instrumented = Dictionary(uniqueKeysWithValues: sources.map { ($0.path, InstrumentedFile(analysis: $0.analysis, emission: emit($0.bytes, $0.analysis, excluding: excluded))) })
-        var overrides = instrumented.mapValues(\.emission.code)
+        var overrides: [String: String] = [:]
+        for (path, code) in plain.merging(instrumented.mapValues(\.emission.code), uniquingKeysWith: { _, new in new }) {
+            overrides[path] = atOriginalPath(code, path: root.appendingPathComponent(path).path)
+        }
         for manifest in manifests {
             let text = try String(contentsOf: root.appendingPathComponent(manifest), encoding: .utf8)
             overrides[manifest] = absolutizeLocalDependencies(manifest: text, packageRoot: root.path)
@@ -63,10 +72,10 @@ func runMutation(_ options: Options) async throws -> Int32 {
         try syncSandbox(root: root, sandbox: sandbox, overrides: overrides)
         let placed = instrumented.values.reduce(0) { $0 + $1.emission.keys.count }
         log("build round \(rounds): \(placed) mutants switched in")
-        let build = try await runProcess("swift", ["build", "--build-tests"], cwd: sandbox, merge: true)
+        let build = try await runProcess("swift", ["build", "--build-tests"] + buildSystem, cwd: sandbox, merge: true)
         if build.status == 0 { break }
         let errors = parseCompilerErrors(build.stdout).map { error in
-            CompilerError(path: sandboxRelative(error.path, sandbox: sandbox) ?? error.path, line: error.line, column: error.column, message: error.message)
+            CompilerError(path: sandboxRelative(error.path, sandbox: sandbox, root: root) ?? error.path, line: error.line, column: error.column, message: error.message)
         }
         let culprits = blame(errors, files: instrumented)
         let fresh = culprits.keys.subtracting(excluded)
@@ -76,14 +85,15 @@ func runMutation(_ options: Options) async throws -> Int32 {
             throw CLIError("the package does not build in the sandbox (\(sandbox.path)):\n\(detail)", exitCode: 4)
         }
         excluded.formUnion(fresh)
+        try writeCompileErrors(excluded, of: mutants, envHash: envHash, to: recordURL)
         log("  \(fresh.count) mutants do not compile; rebuilding without them")
     }
 
     // 4. Tests and their fingerprints.
     let toolchain = try await discoverToolchain(cwd: sandbox)
-    let binPath = try await runProcess("swift", ["build", "--show-bin-path"], cwd: sandbox).stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+    let binPath = try await runProcess("swift", ["build", "--show-bin-path"] + buildSystem, cwd: sandbox).stdout.trimmingCharacters(in: .whitespacesAndNewlines)
     let runner = TestRunner(sandbox: sandbox, bundles: try discoverBundles(binPath: binPath), toolchain: toolchain)
-    let listed = try await runProcess("swift", ["test", "list", "--skip-build"], cwd: sandbox)
+    let listed = try await runProcess("swift", ["test", "list", "--skip-build"] + buildSystem, cwd: sandbox)
     guard listed.status == 0 else { throw CLIError("swift test list failed:\n\(listed.output)") }
     let testIds = parseTestList(listed.stdout)
     let fingerprints = testFingerprints(ids: testIds, modules: try testSources(root: root, package: package), extra: try testResources(root: root, package: package))
@@ -92,9 +102,10 @@ func runMutation(_ options: Options) async throws -> Int32 {
     let allScopes = sources.flatMap { file in file.analysis.scopes.map { (key: $0.key(file: file.path), scope: $0) } }
     let scopeHashes = Dictionary(allScopes.map { ($0.key, $0.scope.hash) }, uniquingKeysWith: { first, _ in first })
     let declarationScopes = Set(allScopes.filter { !$0.scope.isFunction }.map(\.key))
+    let extensions = Set(allScopes.filter(\.scope.isExtension).map(\.key))
     let previousDurations = Dictionary((previous?.tests ?? []).map { ($0.id, $0.durationMs) }, uniquingKeysWith: { first, _ in first })
     let provisional = testIds.map { TestInfo(id: $0, fingerprint: fingerprints[$0] ?? "", durationMs: previousDurations[$0] ?? 0) }
-    let toMeasure = testsToMeasure(previous: previous, tests: provisional, scopes: scopeHashes, declarationScopes: declarationScopes, full: options.fullDryRun)
+    let toMeasure = testsToMeasure(previous: previous, tests: provisional, scopes: scopeHashes, declarationScopes: declarationScopes, extensions: extensions, full: options.fullDryRun)
     let measureIds = testIds.filter(toMeasure.contains)
     log("dry run: \(measureIds.count)/\(testIds.count) tests")
     let coverageDir = mutatorDir.appendingPathComponent("coverage")
@@ -179,6 +190,33 @@ func runMutation(_ options: Options) async throws -> Int32 {
     let failures = gateFailures(ordered, diffOnly: diffOnly, thresholds: thresholds, failOnSurvived: options.failOnSurvived)
     for failure in failures { log("quality gate: \(failure)") }
     return failures.isEmpty ? 0 : 2
+}
+
+/// The sandbox is built with the native build system: once a compile fails, Swift Build (the default
+/// of recent toolchains) starts no other, so a round would find only the errors of the first few
+/// files to fail; the native one reports every file's.
+private let buildSystem = ["--build-system", "native"]
+
+/// Mutants found not to compile, written after each build round.
+private struct CompileErrorRecord: Codable {
+    let toolVersion: String
+    let envHash: String
+    /// Mutant key -> hash of its scope when it did not compile.
+    let scopeHashes: [String: String]
+}
+
+private func readCompileErrors(_ url: URL, envHash: String) -> [String: String] {
+    guard let data = try? Data(contentsOf: url), let record = try? JSONDecoder().decode(CompileErrorRecord.self, from: data),
+          record.toolVersion == toolVersion, record.envHash == envHash else { return [:] }
+    return record.scopeHashes
+}
+
+private func writeCompileErrors(_ keys: Set<String>, of mutants: [Mutant], envHash: String, to url: URL) throws {
+    let hashes = Dictionary(mutants.filter { keys.contains($0.key) }.map { ($0.key, $0.scope.hash) }, uniquingKeysWith: { first, _ in first })
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.sortedKeys]
+    try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try encoder.encode(CompileErrorRecord(toolVersion: toolVersion, envHash: envHash, scopeHashes: hashes)).write(to: url, options: .atomic)
 }
 
 private final class Progress: @unchecked Sendable {

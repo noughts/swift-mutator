@@ -3,7 +3,9 @@ import MutatorCore
 
 // The sandbox is a copy of the package under `.mutator/sandbox` where instrumented sources
 // replace the originals. It is kept between runs so `swift build` only recompiles what changed:
-// files are written only when their content differs.
+// files are written only when their content differs. Symbolic links are copied as the files they
+// point to: a relative link would point elsewhere from the sandbox, and writing an instrumented
+// source through a link would change the original.
 
 private let skippedDirectories: Set<String> = [".build", ".git", ".mutator", ".swiftpm", ".index-build", "DerivedData"]
 
@@ -11,10 +13,8 @@ private let skippedDirectories: Set<String> = [".build", ".git", ".mutator", ".s
 func syncSandbox(root: URL, sandbox: URL, overrides: [String: String]) throws {
     let fm = FileManager.default
     try fm.createDirectory(at: sandbox, withIntermediateDirectories: true)
-    var wanted = Set<String>()
-    for rel in try listFiles(root) {
-        wanted.insert(rel)
-        let source = root.appendingPathComponent(rel)
+    let files = try listFiles(root)
+    for (rel, source) in files {
         let target = sandbox.appendingPathComponent(rel)
         try fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
         if let text = overrides[rel] {
@@ -23,27 +23,29 @@ func syncSandbox(root: URL, sandbox: URL, overrides: [String: String]) throws {
             try writeIfChanged(try Data(contentsOf: source), to: target)
         }
     }
-    for rel in try listFiles(sandbox) where !wanted.contains(rel) {
+    for rel in try listFiles(sandbox).keys where files[rel] == nil {
         try fm.removeItem(at: sandbox.appendingPathComponent(rel))
     }
 }
 
-/// Regular files under `directory`, relative, skipping build products and VCS metadata.
-private func listFiles(_ directory: URL) throws -> [String] {
-    let fm = FileManager.default
-    guard let enumerator = fm.enumerator(at: directory, includingPropertiesForKeys: [.isDirectoryKey, .isRegularFileKey]) else { return [] }
-    let base = directory.standardizedFileURL.path
-    var out: [String] = []
-    for case let url as URL in enumerator {
-        let values = try url.resourceValues(forKeys: [.isDirectoryKey, .isRegularFileKey])
-        if values.isDirectory == true {
-            if skippedDirectories.contains(url.lastPathComponent) { enumerator.skipDescendants() }
-            continue
+/// Files under `directory`: relative path -> the regular file it is (symbolic links resolved),
+/// skipping build products and VCS metadata. A directory reached twice through links is walked once.
+private func listFiles(_ directory: URL) throws -> [String: URL] {
+    var out: [String: URL] = [:]
+    var visited = Set<String>()
+    func visit(_ dir: URL, prefix: String) throws {
+        guard visited.insert(realPath(dir)).inserted else { return }
+        for name in try FileManager.default.contentsOfDirectory(atPath: dir.path) {
+            let target = dir.appendingPathComponent(name).resolvingSymlinksInPath()
+            let values = try? target.resourceValues(forKeys: [.isDirectoryKey, .isRegularFileKey])
+            if values?.isDirectory == true {
+                if !skippedDirectories.contains(name) { try visit(target, prefix: prefix + name + "/") }
+            } else if values?.isRegularFile == true {
+                out[prefix + name] = target
+            }
         }
-        guard values.isRegularFile == true else { continue }
-        let path = url.standardizedFileURL.path
-        out.append(String(path.dropFirst(base.count + 1)))
     }
+    try visit(directory, prefix: "")
     return out
 }
 
@@ -70,9 +72,10 @@ func realPath(_ url: URL) -> String {
     return String(cString: resolved)
 }
 
-/// Relative path of a compiler diagnostic path inside the sandbox, or nil.
-func sandboxRelative(_ path: String, sandbox: URL) -> String? {
-    for prefix in Set([sandbox.path, realPath(sandbox)]) where path.hasPrefix(prefix + "/") {
+/// Relative path of a compiler diagnostic path inside the sandbox, or of a source compiled at its
+/// original path under `root` (see `atOriginalPath`), or nil.
+func sandboxRelative(_ path: String, sandbox: URL, root: URL) -> String? {
+    for prefix in Set([sandbox.path, realPath(sandbox), root.path]) where path.hasPrefix(prefix + "/") {
         return String(path.dropFirst(prefix.count + 1))
     }
     return nil

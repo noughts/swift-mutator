@@ -102,8 +102,16 @@ struct TestRunner: Sendable {
     }
 
     /// Runs `ids` in order of first appearance per bundle and library; stops at the first failing group.
+    /// Side effect: a home directory of its own for the run, removed afterwards. Tests run in
+    /// parallel processes (a `.serialized` suite included), so files they keep in the home
+    /// (Application Support, caches, preferences) would race, and a mutant would leave them behind.
     func run(_ ids: [String], environment: [String: String], timeoutMs: Int?) async -> TestRun {
-        let env = baseEnvironment.merging(environment) { _, new in new }
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("swift-mutator-home-\(UUID().uuidString)")
+        let tmp = home.appendingPathComponent("tmp")
+        try? FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let isolated = ["HOME": home.path, "CFFIXED_USER_HOME": home.path, "TMPDIR": tmp.path + "/"]
+        let env = baseEnvironment.merging(environment) { _, new in new }.merging(isolated) { _, new in new }
         var groups: [(bundle: TestBundle, swiftTesting: Bool, ids: [String])] = []
         for id in ids {
             guard let target = bundle(for: testModule(id), in: bundles) else { continue }

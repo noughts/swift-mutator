@@ -63,12 +63,15 @@ public struct Scope: Hashable, Sendable {
     public let span: Span
     /// Function-like (function, initializer, accessor, closure) rather than a declaration (type, global).
     public let isFunction: Bool
+    /// An extension: it can add members and conformances to a type declared elsewhere.
+    public let isExtension: Bool
 
-    public init(id: String, hash: String, span: Span, isFunction: Bool) {
+    public init(id: String, hash: String, span: Span, isFunction: Bool, isExtension: Bool = false) {
         self.id = id
         self.hash = hash
         self.span = span
         self.isFunction = isFunction
+        self.isExtension = isExtension
     }
 
     public func key(file: String) -> String { "\(file)#\(id)" }
