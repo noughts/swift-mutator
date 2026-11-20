@@ -1,28 +1,28 @@
 # swift-mutator
 
-[mizchi/mutator](https://github.com/mizchi/mutator) の Swift 用の移植です。
+A Swift port of [mizchi/mutator](https://github.com/mizchi/mutator).
 
-mizchi/mutator は [mizchi](https://github.com/mizchi) さんが作った、TypeScript / JavaScript（Vitest）向けの差分駆動ミューテーションテストツールです。swift-mutator はその設計とロジックを Swift Package 向けに移したもので、アイデアはすべてオリジナルに由来します。考え方の詳細は、オリジナルの [README](https://github.com/mizchi/mutator#readme) と [設計ノート](https://github.com/mizchi/mutator/blob/main/docs/design.md) を参照してください。TypeScript / JavaScript のプロジェクトには、オリジナルの mizchi/mutator を使ってください。
+mizchi/mutator is a diff-driven mutation testing tool for TypeScript / JavaScript (Vitest), created by [mizchi](https://github.com/mizchi). swift-mutator carries its design and logic over to Swift packages, and all of its ideas come from the original. For details on the approach, see the original [README](https://github.com/mizchi/mutator#readme) and [design notes](https://github.com/mizchi/mutator/blob/main/docs/design.md). For TypeScript / JavaScript projects, use the original mizchi/mutator.
 
-このリポジトリはオリジナルとは別に移植したものです。Swift 版の不具合や要望は、オリジナルではなくこのリポジトリの Issue にお願いします。
+This repository is a port maintained separately from the original. Please report bugs and feature requests for the Swift version in this repository's issues, not in the original's.
 
-## 特徴
+## Features
 
-オリジナルから受け継いだ仕組みに、Swift のコンパイル言語としての性質に合わせた仕組みを加えています。
+On top of the mechanisms inherited from the original, swift-mutator adds mechanisms suited to Swift being a compiled language.
 
-- **ミューテーションスイッチング**: すべての変異をソースへ一度に埋め込んでビルドを1回で済ませ、実行時に環境変数で有効な変異を切り替えます。
-- **コンパイルできない変異の除外**: 型エラーになる変異（`String - String` など）はコンパイラの診断から特定して除外し、再ビルドします（`CompileError`）。Swift 版で追加した仕組みです。
-- **テスト単位のカバレッジ**: ドライランでテストごとに到達した変異を記録し、各変異はそれに到達するテストだけで実行します。
-- **結果の再利用**: 変異のキーは位置に依存しません（`file + scope path + AST path + mutator + replacement`）。結果は外側の関数のハッシュとともにキャッシュされ、関数もカバーするテストも変わっていなければ再実行しません。
-- **`--since <ref>`**: `git diff <ref>` に含まれる変異だけを実行・報告します（PR モード）。
+- **Mutation switching**: Embeds every mutant into the source at once so that a single build suffices, and selects the active mutant at runtime through an environment variable.
+- **Excluding mutants that don't compile**: Mutants that cause type errors (such as `String - String`) are identified from compiler diagnostics, excluded, and the package is rebuilt (`CompileError`). This mechanism is specific to the Swift version.
+- **Per-test coverage**: A dry run records which mutants each test reaches, and each mutant is run only against the tests that reach it.
+- **Result reuse**: Mutant keys don't depend on position (`file + scope path + AST path + mutator + replacement`). Results are cached together with the hash of the enclosing function and are not rerun if neither the function nor the tests covering it have changed.
+- **`--since <ref>`**: Runs and reports only the mutants within `git diff <ref>` (PR mode).
 
-## 必要環境
+## Requirements
 
-- macOS 13 以降、Swift 6.0 以降のツールチェイン（Xcode）
-- 対象は SwiftPM パッケージ（XCTest と swift-testing の両方に対応）
-- Linux 向けのコード経路（テストバンドルを直接実行）も実装していますが、未検証です。
+- macOS 13 or later, with a Swift 6.0 or later toolchain (Xcode)
+- Targets SwiftPM packages (both XCTest and swift-testing are supported)
+- A code path for Linux (running test bundles directly) is also implemented, but untested.
 
-## 使い方
+## Usage
 
 ```bash
 git clone https://github.com/noughts/swift-mutator.git
@@ -36,22 +36,22 @@ cd swift-mutator && swift build -c release
 .build/release/swift-mutator --root path/to/YourPackage
 ```
 
-`swift-mutator` を PATH に置くと、`swift mutator` としても呼べます（`swift` は `swift-<名前>` の実行ファイルをサブコマンドとして呼び出します）。
+If you put `swift-mutator` on your PATH, you can also invoke it as `swift mutator` (`swift` runs executables named `swift-<name>` as subcommands).
 
-主な使い方:
+Common usage:
 
 ```bash
-swift-mutator                          # 全体を実行し .mutator/snapshot.json を書く
-swift-mutator                          # 2回目以降は変わっていない結果を再利用する
-swift-mutator --since main             # PR モード: main との差分にある変異だけ
+swift-mutator                          # run everything and write .mutator/snapshot.json
+swift-mutator                          # later runs reuse results that haven't changed
+swift-mutator --since main             # PR mode: only mutants in the diff against main
 swift-mutator --reporter text --reporter html --reporter json
-swift-mutator --list                   # 実行せずに変異の一覧だけを出す
-swift-mutator --fail-on-survived       # Survived（not detected）の変異があれば exit 2
+swift-mutator --list                   # list mutants without running them
+swift-mutator --fail-on-survived       # exit 2 if any mutant Survived (not detected)
 ```
 
-対象パッケージの `.gitignore` に `.mutator/` を追加してください（サンドボックス・スナップショット・レポートの置き場所です）。
+Add `.mutator/` to the target package's `.gitignore` (it holds the sandbox, snapshot, and reports).
 
-`Examples/Pricing` で試すと、次のような出力になります（初回、M シリーズ Mac で数秒）。
+Trying it on `Examples/Pricing` produces output like this (first run, a few seconds on an M-series Mac).
 
 ```
 swift-mutator: 42 mutants (42 in 2 files)
@@ -67,133 +67,133 @@ not reached (no test runs the mutant: add a test):
   ...
 ```
 
-変更なしで再実行すると、ドライランも変異の実行も 0 件になります。関数を1つ編集すると、その関数をカバーしていたテストだけを再計測し、その関数の変異だけを再実行します。
+Rerunning without changes performs no dry runs and runs no mutants. Editing a single function re-measures only the tests that covered that function and reruns only that function's mutants.
 
-### 未検出の変異の分類
+### Categories of undetected mutants
 
-- **not detected**（`Survived`）: テストは変異に到達しているが、どれも失敗しない。アサーションを強めるか、等価変異として無効化する。
-- **not reached**（`NoCoverage`）: どのテストも変異に到達しない。テストケースを追加する。
+- **not detected** (`Survived`): Tests reach the mutant, but none of them fails. Strengthen an assertion, or disable it as an equivalent mutant.
+- **not reached** (`NoCoverage`): No test reaches the mutant. Add a test case.
 
-### 変異の無効化
+### Disabling mutants
 
 ```swift
-// mutator-disable-next-line EqualityOperator: しきい値は別途検証済み
+// mutator-disable-next-line EqualityOperator: the threshold is verified separately
 if total >= 5000 { ... }
 let x = a + b // mutator-disable-line
-// mutator-disable / mutator-enable で範囲指定、StrykerJS の `// Stryker disable` も解釈します
+// Use mutator-disable / mutator-enable for ranges; StrykerJS's `// Stryker disable` is also recognized
 ```
 
-ログ出力だけのコード（`print`、`debugPrint`、`NSLog`、`os_log`、`logger.*`、`log.*`、`*.debug`、`*.trace` など）の変異は `Ignored (arid: logging)` として実行しません（Google の arid node ルール）。`--no-arid` で無効化、`--arid-callee <pattern>` でパターンを追加できます。
+Mutants in code that only does logging (`print`, `debugPrint`, `NSLog`, `os_log`, `logger.*`, `log.*`, `*.debug`, `*.trace`, and so on) are marked `Ignored (arid: logging)` and not run (Google's arid node rule). Turn this off with `--no-arid`, or add patterns with `--arid-callee <pattern>`.
 
-### 終了コード
+### Exit codes
 
-| code | 意味 |
+| code | meaning |
 |---|---|
-| `0` | 正常 |
-| `1` | 不正なオプション、その他の失敗 |
-| `2` | 品質ゲート失敗（`--threshold-break` 未満、`--fail-on-survived` で Survived あり） |
-| `4` | 変異なしでテストが失敗する、またはサンドボックスでビルドできない |
+| `0` | Success |
+| `1` | Invalid option, or another failure |
+| `2` | Quality gate failed (score below `--threshold-break`, or a Survived mutant with `--fail-on-survived`) |
+| `4` | Tests fail without any mutant, or the sandbox fails to build |
 
-## 仕組み
+## How it works
 
 ```
-analyze（純粋関数）  swift-syntax でパースし SwiftOperators で演算子を畳み込む → 変異候補・スコープ・配置
-emit（純粋関数）     変異をスイッチとして埋め込んだソースと、ファイル単位のランタイムを生成
-sandbox             パッケージを .mutator/sandbox に同期（内容が変わったファイルだけ書くので増分ビルドが効く）
-build               swift build --build-tests。失敗したら診断を変異に帰属させて除外し、再ビルド
-dry run             テストを1件ずつ実行し、到達した変異のキーを記録（変更の影響を受けるテストだけ）
-plan（純粋関数）     スナップショットと比べて、再利用・未到達・実行（テストの順序とタイムアウト）を決める
-run                 変異ごとにカバーするテストを実行（並列）。失敗したテストを killedBy として記録
-report              テキスト要約、mutation-testing-elements 形式の JSON / HTML
+analyze (pure)  parse with swift-syntax and fold operators with SwiftOperators → mutant candidates, scopes, placement
+emit (pure)     generate source with mutants embedded as switches, plus a per-file runtime
+sandbox         sync the package into .mutator/sandbox (only files whose content changed are written, so builds stay incremental)
+build           swift build --build-tests; on failure, attribute the diagnostics to mutants, exclude them, and rebuild
+dry run         run tests one at a time and record the keys of the mutants reached (only the tests affected by changes)
+plan (pure)     compare with the snapshot and decide what to reuse, what is unreached, and what to run (test order and timeouts)
+run             run the covering tests for each mutant (in parallel); record the failing tests as killedBy
+report          text summary, plus JSON / HTML in the mutation-testing-elements format
 ```
 
-- **スイッチの形**: 式は `(__mutator_on(1) ? (a - b) : (a + b))`、文は `if __mutator_on(2) { } else { f() }`、ブロックは `{ if __mutator_on(3) { return 0 } else { ... } }`。単一式の暗黙の return は `return` を補います。`__mutator_on` はファイル内 `fileprivate` のランタイムで、`SWIFT_MUTATOR_ACTIVE` を見て有効な変異を決め、ドライラン中（`SWIFT_MUTATOR_COVERAGE`）は到達した変異を記録してプロセス終了時に書き出します。
-- **非コンパイル変異の帰属**: 診断位置が変異後のコード内ならその変異、スイッチ内ならそのスイッチの変異、関数内ならその関数の変異、と順に絞り込みます。一度 `CompileError` になった変異は、関数のハッシュが変わるまで最初から除外します（ビルドの往復を減らすため）。
-- **テストの実行**: `swift test` は `.build` をロックして並列実行できないため、ビルド済みのテストバンドルを直接起動します。XCTest は `xctest -XCTest <ids>`、swift-testing は SwiftPM の `swiftpm-testing-helper` にイベントストリーム出力を付けて実行し、失敗・クラッシュしたテストを特定します。1回あたり約 0.03〜0.05 秒です（`swift test` 経由は約 0.5 秒）。
-- **ドライランの差分化**: 型やグローバルなど宣言レベルのスコープが変わったら全テストを再計測します（メンバーの追加でディスパッチが変わりうるため）。それ以外は、新規・変更されたテストと、ハッシュが変わった（または消えた）関数をカバーしていたテストだけを再計測します。
-- **テストのフィンガープリント**: テスト関数自身、そのテストを含む型の残り（`setUp` など）、テストを含まない共有コード（ヘルパ型・関数）、テストモジュールのリソースから計算します。テストやテストクラスを追加しても、他のテストのフィンガープリントは変わりません。
+- **Switch shapes**: An expression becomes `(__mutator_on(1) ? (a - b) : (a + b))`, a statement `if __mutator_on(2) { } else { f() }`, and a block `{ if __mutator_on(3) { return 0 } else { ... } }`. Implicit returns of single-expression bodies get an explicit `return`. `__mutator_on` is a per-file `fileprivate` runtime that reads `SWIFT_MUTATOR_ACTIVE` to determine the active mutant; during a dry run (`SWIFT_MUTATOR_COVERAGE`) it records the mutants reached and writes them out when the process exits.
+- **Attributing non-compiling mutants**: Narrowed down in order: if the diagnostic is inside mutated code, that mutant; if it is inside a switch, that switch's mutants; if it is inside a function, that function's mutants. A mutant that has once been `CompileError` is excluded up front until the function's hash changes (to reduce build round trips).
+- **Running tests**: `swift test` locks `.build` and can't run in parallel, so the built test bundles are launched directly. XCTest is run with `xctest -XCTest <ids>`, and swift-testing is run through SwiftPM's `swiftpm-testing-helper` with event stream output, which identifies the tests that failed or crashed. Each run takes about 0.03–0.05 seconds (about 0.5 seconds through `swift test`).
+- **Incremental dry runs**: If a declaration-level scope such as a type or a global changes, all tests are re-measured (adding members can change dispatch). Otherwise, only new or changed tests, and the tests that covered functions whose hash changed (or that disappeared), are re-measured.
+- **Test fingerprints**: Computed from the test function itself, the rest of the type that contains the test (`setUp` and so on), shared code that contains no tests (helper types and functions), and the test module's resources. Adding a test or a test class doesn't change the fingerprints of other tests.
 
-## 変異の種類
+## Mutators
 
-| mutator | 例 | 元実装との違い |
+| mutator | example | difference from the original |
 |---|---|---|
-| ArithmeticOperator | `a + b` → `a - b`、`*`↔`/`、`%`→`*`、`&+`↔`&-` | 文字列・配列リテラルとの `+` は対象外 |
-| EqualityOperator | `<` → `<=` / `>=`、`==` ↔ `!=`、`===` ↔ `!==` | 同じ |
-| LogicalOperator | `&&` ↔ `\|\|`、`a ?? b` → `b` | `??` は右辺に置換（型が保たれる） |
-| ConditionalExpression | `if` / `guard` / 三項演算子の条件 → `true` / `false`、`while` / `repeat` → `false` | カンマ区切りの複数条件は `&&` と同様に扱う |
-| BooleanLiteral | `true` ↔ `false`、`!x` → `x` | 同じ |
-| UnaryOperator | `-x` → `x`、`~x` → `x` | 削除のみ（cargo-mutants 方式） |
-| AssignmentOperator | `+=` ↔ `-=`、`*=` ↔ `/=`、`<<=` ↔ `>>=`、`&=` ↔ `\|=` | 同じ |
-| ArrayDeclaration | `[a, b]` → `[]` | 空配列への要素追加はしない（型が決まらないため） |
-| DictionaryLiteral | `["a": 1]` → `[:]` | ObjectLiteral に相当 |
-| StringLiteral | `"abc"` → `""`、`""` → `"Stryker was here!"` | 同じ |
-| BlockStatement | `{ ... }` → `{}` | if / ループ / do / catch / defer と、戻り値のない関数・`set`・`deinit` だけ |
-| CallExpression | `cache.clear()`（文）→ 削除 | 中に他の変異がある文、暗黙の return、`fatalError` などは対象外 |
-| MethodExpression | `filter` / `sorted` / `reversed` / `trimmingCharacters` の削除、`hasPrefix` ↔ `hasSuffix`、`lowercased` ↔ `uppercased`、`min` ↔ `max`、`first` ↔ `last`、`prefix` ↔ `suffix`、`dropFirst` ↔ `dropLast`、`allSatisfy` ↔ `contains`（後置クロージャのみ） | Swift の API に置き換え |
-| OptionalChaining | `a?.b` → `a!.b` | スイッチはチェーン全体を包む（型は Optional に昇格） |
-| Regex | `/^a+$/` のアンカー・量指定子・文字クラスなど、`Regex("...")`、`NSRegularExpression(pattern:)` | 拡張構文 `#/.../#` は対象外 |
-| FnValue | 戻り値型から値を生成して本体を置換: `Bool` → `true` / `false`、数値 → `0` / `1` / `-1`、`String` → `""` / `"xyzzy"`、`[T]` → `[]`、`[K: V]` → `[:]`、`T?` → `nil` と `T` の値 | 同じ（cargo-mutants 由来） |
+| ArithmeticOperator | `a + b` → `a - b`, `*`↔`/`, `%`→`*`, `&+`↔`&-` | `+` with string or array literals is skipped |
+| EqualityOperator | `<` → `<=` / `>=`, `==` ↔ `!=`, `===` ↔ `!==` | Same |
+| LogicalOperator | `&&` ↔ `\|\|`, `a ?? b` → `b` | `??` is replaced with its right-hand side (keeps the type) |
+| ConditionalExpression | `if` / `guard` / ternary conditions → `true` / `false`, `while` / `repeat` → `false` | Comma-separated conditions are treated like `&&` |
+| BooleanLiteral | `true` ↔ `false`, `!x` → `x` | Same |
+| UnaryOperator | `-x` → `x`, `~x` → `x` | Removal only (as in cargo-mutants) |
+| AssignmentOperator | `+=` ↔ `-=`, `*=` ↔ `/=`, `<<=` ↔ `>>=`, `&=` ↔ `\|=` | Same |
+| ArrayDeclaration | `[a, b]` → `[]` | Doesn't add elements to empty arrays (the element type can't be determined) |
+| DictionaryLiteral | `["a": 1]` → `[:]` | Counterpart of ObjectLiteral |
+| StringLiteral | `"abc"` → `""`, `""` → `"Stryker was here!"` | Same |
+| BlockStatement | `{ ... }` → `{}` | Only if / loops / do / catch / defer, and functions, `set`, and `deinit` that return no value |
+| CallExpression | `cache.clear()` (statement) → removed | Skips statements that contain other mutants, implicit returns, `fatalError`, and so on |
+| MethodExpression | Removes `filter` / `sorted` / `reversed` / `trimmingCharacters`; `hasPrefix` ↔ `hasSuffix`, `lowercased` ↔ `uppercased`, `min` ↔ `max`, `first` ↔ `last`, `prefix` ↔ `suffix`, `dropFirst` ↔ `dropLast`, `allSatisfy` ↔ `contains` (trailing closures only) | Adapted to Swift APIs |
+| OptionalChaining | `a?.b` → `a!.b` | The switch wraps the whole chain (the type is promoted to Optional) |
+| Regex | Anchors, quantifiers, character classes, etc. in `/^a+$/`, `Regex("...")`, and `NSRegularExpression(pattern:)` | Extended syntax `#/.../#` is skipped |
+| FnValue | Replaces the body with a value generated from the return type: `Bool` → `true` / `false`, numbers → `0` / `1` / `-1`, `String` → `""` / `"xyzzy"`, `[T]` → `[]`, `[K: V]` → `[:]`, `T?` → `nil` and values of `T` | Same (from cargo-mutants) |
 
-元実装の ArrowFunction（`undefined` が存在しない）と UpdateOperator（`++` / `--` が存在しない）は移植していません。
+The original's ArrowFunction (Swift has no `undefined`) and UpdateOperator (Swift has no `++` / `--`) are not ported.
 
-変異を置かない箇所: `@inlinable` / `@_alwaysEmitIntoClient` / `@_transparent` の本体（クライアントにコピーされ、ファイル内ランタイムを参照できないため）、デフォルト引数、enum の raw value、属性・マクロの引数、`#if` の条件、名前を束縛するパターン（`case let x`、`case .some(let x)`）、型、`[Int]()` のように呼び出される型。束縛を含まない式パターン（`case "GET":`、`case a == b:`）は変異させます。
+No mutants are placed in: the bodies of `@inlinable` / `@_alwaysEmitIntoClient` / `@_transparent` declarations (they are copied into clients and can't reference the per-file runtime), default arguments, enum raw values, attribute and macro arguments, `#if` conditions, name-binding patterns (`case let x`, `case .some(let x)`), types, and types that are called, such as `[Int]()`. Expression patterns without bindings (`case "GET":`, `case a == b:`) are mutated.
 
-## mizchi/mutator との対応
+## Mapping to mizchi/mutator
 
 | mizchi/mutator | swift-mutator |
 |---|---|
-| `core/src/mutators.ts`、`regex.ts` | `Sources/MutatorCore/Mutators.swift`、`Regex.swift` |
-| `core/src/instrument.ts`、`scope.ts`、`ast.ts` | `Analyze.swift`、`Scope.swift`、`SyntaxSupport.swift` |
-| `core/src/placement.ts`、`emit.ts`、`runtime.ts` | `Placement.swift`、`Emit.swift` |
-| `core/src/arid.ts`、`disable.ts`、`hash.ts`、`text.ts` | `Arid.swift`、`Disable.swift`、`Hash.swift`（同じ cyrb53）、`Text.swift` |
-| `core/src/diff.ts`、`cli/src/since.ts`、`git.ts` | `Diff.swift`、`Since.swift`、`Sources/MutatorCLI/Git.swift` |
-| `core/src/plan.ts`、`cli/src/coverage-cache.ts` | `Plan.swift`、`DryRun.swift`、`Fingerprint.swift` |
-| `cli/src/mte-report.ts`、`report.ts`、`status.ts` | `Report.swift` |
-| `@mizchi/mutator-typecheck` | `Diagnostics.swift`（コンパイラ診断から非コンパイル変異を特定） |
-| `@mizchi/mutator-vitest`（Vite transform、セッション） | `Sources/MutatorCLI/Sandbox.swift`、`TestRunner.swift`、`TestOutput.swift` |
-| `cli/src/run.ts`、`options.ts` | `Sources/MutatorCLI/Run.swift`、`Options.swift` |
+| `core/src/mutators.ts`, `regex.ts` | `Sources/MutatorCore/Mutators.swift`, `Regex.swift` |
+| `core/src/instrument.ts`, `scope.ts`, `ast.ts` | `Analyze.swift`, `Scope.swift`, `SyntaxSupport.swift` |
+| `core/src/placement.ts`, `emit.ts`, `runtime.ts` | `Placement.swift`, `Emit.swift` |
+| `core/src/arid.ts`, `disable.ts`, `hash.ts`, `text.ts` | `Arid.swift`, `Disable.swift`, `Hash.swift` (the same cyrb53), `Text.swift` |
+| `core/src/diff.ts`, `cli/src/since.ts`, `git.ts` | `Diff.swift`, `Since.swift`, `Sources/MutatorCLI/Git.swift` |
+| `core/src/plan.ts`, `cli/src/coverage-cache.ts` | `Plan.swift`, `DryRun.swift`, `Fingerprint.swift` |
+| `cli/src/mte-report.ts`, `report.ts`, `status.ts` | `Report.swift` |
+| `@mizchi/mutator-typecheck` | `Diagnostics.swift` (identifies non-compiling mutants from compiler diagnostics) |
+| `@mizchi/mutator-vitest` (Vite transform, sessions) | `Sources/MutatorCLI/Sandbox.swift`, `TestRunner.swift`, `TestOutput.swift` |
+| `cli/src/run.ts`, `options.ts` | `Sources/MutatorCLI/Run.swift`, `Options.swift` |
 
-`MutatorCore` は純粋関数だけで構成し（ファイル・プロセス・時刻に触れません）、I/O は `MutatorCLI` に寄せています。
+`MutatorCore` consists only of pure functions (it doesn't touch files, processes, or the clock), and I/O is kept in `MutatorCLI`.
 
-### 未移植の機能
+### Features not ported
 
-weak mutation（感染しない変異を実行せずに判定）、`--kill-matrix`、`--reporter simplify` / `agent`、`select-tests`、`mutator accept`、critical regions、CI シャード、`--watch`、プラグイン、静的コールグラフ（`--experimental-callgraph`）、`--mutants-per-line` / `--time-budget`、設定ファイル。
+Weak mutation (classifying mutants that don't infect program state without running them), `--kill-matrix`, `--reporter simplify` / `agent`, `select-tests`, `mutator accept`, critical regions, CI sharding, `--watch`, plugins, the static call graph (`--experimental-callgraph`), `--mutants-per-line` / `--time-budget`, and configuration files.
 
-## 制約
+## Limitations
 
-- テストはプロセス単位で並列実行します（`-j`）。ファイルやポートを共有するテストが干渉する場合は `-j 1` にしてください。
-- サンドボックスは初回にパッケージ全体をビルドします。2回目以降は計装結果が変わったファイルだけが再コンパイルされます。
-- 一度 `CompileError` と判定された変異は、外側の関数が変わるまで再検査しません。
-- macOS ではクラッシュした変異ごとにクラッシュレポートが作られることがあります。
+- Tests run in parallel, one process each (`-j`). If tests that share files or ports interfere with each other, use `-j 1`.
+- The sandbox builds the whole package on the first run. After that, only files whose instrumented output changed are recompiled.
+- A mutant once judged `CompileError` isn't rechecked until its enclosing function changes.
+- On macOS, a crash report may be generated for each mutant that crashes.
 
-## 開発
+## Development
 
 ```bash
 swift test
 ```
 
-- `MutatorCoreTests`: 純粋関数の単体テストです。
-- `MutatorCLITests`: 実際に `swift build`・`swiftc` とテストプロセスを通す統合テストで、1分ほどかかります。
+- `MutatorCoreTests`: unit tests for the pure functions.
+- `MutatorCLITests`: integration tests that actually go through `swift build`, `swiftc`, and test processes; they take about a minute.
 
-テストの多くはオリジナルのテストから移植しています。オリジナルの入力が TypeScript / JavaScript の場合は Swift のコードに書き換えています。
+Most of the tests are ported from the original's tests. Where the original's input is TypeScript / JavaScript, it has been rewritten as Swift code.
 
-| オリジナルのテスト | 移植先 |
+| Original test | Ported to |
 |---|---|
-| `core/test/diff.test.ts` | `DiffTests.swift`（全 46 件） |
+| `core/test/diff.test.ts` | `DiffTests.swift` (all 46 cases) |
 | `core/test/plan.test.ts` | `PlanTests.swift` |
-| `core/test/disable.test.ts`、`arid.test.ts` | `DisableTests.swift`、`AridTests.swift`（全件） |
-| `core/test/mutators.test.ts`、`instrument.test.ts` | `MutatorsTests.swift`、`InstrumentTests.swift` |
-| 上記のミューテーションスイッチングのオラクルとカバレッジ記録 | `Tests/MutatorCLITests/SwitchingOracleTests.swift` |
-| `cli/test/mte-report.test.ts`、`gate.test.ts` | `MutationTestingReportTests.swift` |
+| `core/test/disable.test.ts`, `arid.test.ts` | `DisableTests.swift`, `AridTests.swift` (all cases) |
+| `core/test/mutators.test.ts`, `instrument.test.ts` | `MutatorsTests.swift`, `InstrumentTests.swift` |
+| The mutation-switching oracle and coverage recording from the above | `Tests/MutatorCLITests/SwitchingOracleTests.swift` |
+| `cli/test/mte-report.test.ts`, `gate.test.ts` | `MutationTestingReportTests.swift` |
 
-移植したのは、swift-mutator にある機能のテストです。移植していない機能のテストは対象外にしており、各テストファイルの冒頭に、何を移植していないかを書いています。
+Only the tests for features that swift-mutator has were ported. Tests for features that weren't ported are left out, and the top of each test file notes what wasn't ported.
 
-振る舞いオラクルは、計装したコードで変異 k を有効にした実行結果が、変異 k だけを適用したソースの実行結果と一致することを、コーパス内のすべての変異について確かめます。Swift ではこれを、変異ごとに実際にコンパイルして実行することで確かめています。
+For every mutant in the corpus, the behavioral oracle checks that running the instrumented code with mutant k enabled gives the same result as running the source with only mutant k applied. In Swift, this is checked by actually compiling and running each mutant.
 
-## クレジットとライセンス
+## Credits and license
 
-- 設計・アルゴリズム・変異の種類・レポートの分類は、[mizchi](https://github.com/mizchi) さんの [mizchi/mutator](https://github.com/mizchi/mutator)（MIT License）に基づいています。オリジナル自体も StrykerJS、cargo-mutants、PIT、Google の "Practical Mutation Testing at Scale" などの先行研究を土台にしています。
-- 変異のキーに使うハッシュ関数（cyrb53）は、オリジナルと同じ実装を移植しており、同じ入力に同じ値を返します。
-- 正規表現の変異は、オリジナルと同じく weapon-regex の level 1 の一部に相当します。
+- The design, algorithms, mutators, and report categories are based on [mizchi/mutator](https://github.com/mizchi/mutator) (MIT License) by [mizchi](https://github.com/mizchi). The original itself builds on prior work such as StrykerJS, cargo-mutants, PIT, and Google's "Practical Mutation Testing at Scale".
+- The hash function used for mutant keys (cyrb53) is a port of the same implementation as the original and returns the same values for the same input.
+- As in the original, the regex mutations correspond to part of weapon-regex level 1.
 
-ライセンスはオリジナルに合わせて MIT License です。オリジナルの著作権表示を [LICENSE](LICENSE) に残しています。
+Licensed under the MIT License, matching the original. The original's copyright notice is kept in [LICENSE](LICENSE).
