@@ -148,6 +148,20 @@ private func snapshot(_ root: URL) throws -> Snapshot {
         #expect(try fm.destinationOfSymbolicLink(atPath: link.path) == "../../../../../App/Models/Shared.swift")
     }
 
+    /// A mutant that leaves elements in `Set` order (a `sorted` removed) must get the same verdict on every run.
+    @Test func testProcessesIterateASetInTheSameOrder() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("swift-mutator-hash-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try "print(Array(Set((1...20).map(String.init))))\n".write(to: dir.appendingPathComponent("main.swift"), atomically: true, encoding: .utf8)
+        #expect(try await runProcess("swiftc", ["main.swift", "-o", "order"], cwd: dir).status == 0)
+        var orders = Set<String>()
+        for _ in 0 ..< 3 {
+            orders.insert(try await runProcess(dir.appendingPathComponent("order").path, [], cwd: dir, environment: testEnvironment([:])).stdout)
+        }
+        #expect(orders.count == 1)
+    }
+
     @Test func instrumentedSourcesTypeCheck() async throws {
         let source = """
         import Foundation

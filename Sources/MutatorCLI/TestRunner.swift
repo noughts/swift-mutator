@@ -85,6 +85,9 @@ func testEnvironment(_ extra: [String: String]) -> [String: String] {
     env.merge(extra) { _, new in new }
     // Crashing mutants are common; the runtime backtracer would make each crash slow.
     env["SWIFT_BACKTRACE"] = "enable=no"
+    // The same order of Set and Dictionary in every process: a mutant whose outcome depends on it
+    // (a `sorted` removed) gets the same verdict on every run.
+    env["SWIFT_DETERMINISTIC_HASHING"] = "1"
     return env
 }
 
