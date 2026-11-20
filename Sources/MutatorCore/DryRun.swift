@@ -7,11 +7,11 @@
 /// - Otherwise new and changed tests, and tests that covered a function whose hash changed or that
 ///   disappeared. A new function, type or global is reached only through an edited caller or test,
 ///   measured anyway.
-public func testsToMeasure(previous: Snapshot?, tests: [TestInfo], scopes: [String: String], declarationScopes: Set<String>, extensions: Set<String>, full: Bool) -> Set<String> {
+public func testsToMeasure(previous: Snapshot?, tests: [TestInfo], scopes: [String: String], extensions: Set<String>, full: Bool) -> Set<String> {
     let all = Set(tests.map(\.id))
     guard let previous, !full else { return all }
     let before = Set(previous.declarationScopes)
-    if before.contains(where: { previous.scopes[$0] != scopes[$0] }) || !declarationScopes.subtracting(before).isDisjoint(with: extensions) { return all }
+    if before.contains(where: { previous.scopes[$0] != scopes[$0] }) || !extensions.isSubset(of: before) { return all }
     var out = changedTests(previous, tests).intersection(all)
     let changedScopes = Set(previous.scopes.filter { scopes[$0.key] != $0.value }.map(\.key))
     let scopeOf = Dictionary(previous.results.map { ($0.key, $0.scopeKey) }, uniquingKeysWith: { first, _ in first })

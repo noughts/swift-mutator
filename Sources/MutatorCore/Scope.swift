@@ -66,7 +66,8 @@ struct ScopeTracker {
             }
         }
         used.insert(id)
-        let scope = Scope(id: id, hash: hash, span: node.span, isFunction: isFunctionLike(node), isExtension: node.is(ExtensionDeclSyntax.self))
+        let kind: Scope.Kind = isFunctionLike(node) ? .function : node.is(ExtensionDeclSyntax.self) ? .extension : .declaration
+        let scope = Scope(id: id, hash: hash, span: node.span, kind: kind)
         stack.append(ScopeFrame(scope: scope, node: node, depth: depth))
         return scope
     }

@@ -212,20 +212,20 @@ private func canEmpty(_ block: CodeBlockSyntax) -> Bool {
 /// the compiler costs a build round of its own.
 private func breaksFlow(_ block: CodeBlockSyntax, owner: Syntax) -> Bool {
     let completes = owner.is(DoStmtSyntax.self) || owner.is(CatchClauseSyntax.self) || owner.as(IfExprSyntax.self)?.elseBody != nil
-    if completes, alwaysExits(block) { return true }
-    let assigned = assignedNames(Syntax(block))
+    if completes, alwaysExits(block), endsValueBody(owner) { return true }
+    let assigned = Set(localNodes(Syntax(block)).compactMap(assignedName))
     if assigned.isEmpty { return false }
     let function = sequence(first: owner) { $0.parent }.first(where: isFunctionLike)
     // An initializer must set every stored property, with or without `self.`.
     if function?.is(InitializerDeclSyntax.self) == true { return true }
-    return !assigned.isDisjoint(with: uninitializedNames(in: function ?? owner.root))
+    return !assigned.isDisjoint(with: localNodes(function ?? owner.root).compactMap(uninitializedName))
 }
 
 /// The block ends in `return` or `throw`, or in an `if` / `else` whose branches all do.
 private func alwaysExits(_ block: CodeBlockSyntax) -> Bool {
     guard let last = block.statements.last?.item else { return false }
     if last.is(ReturnStmtSyntax.self) || last.is(ThrowStmtSyntax.self) { return true }
-    guard let ifExpr = last.as(ExpressionStmtSyntax.self)?.expression.as(IfExprSyntax.self) ?? last.as(IfExprSyntax.self) else { return false }
+    guard let ifExpr = last.as(ExpressionStmtSyntax.self)?.expression.as(IfExprSyntax.self) else { return false }
     return ifAlwaysExits(ifExpr)
 }
 
@@ -237,35 +237,46 @@ private func ifAlwaysExits(_ ifExpr: IfExprSyntax) -> Bool {
     }
 }
 
-/// Names assigned under `node` (`x = ...`, `self.x = ...`), outside nested closures and functions.
-private func assignedNames(_ node: Syntax) -> Set<String> {
-    var out = Set<String>()
-    for child in node.children(viewMode: .sourceAccurate) where !isFunctionLike(child) {
-        if let infix = child.as(InfixOperatorExprSyntax.self), infix.operator.is(AssignmentExprSyntax.self) {
-            let target = infix.leftOperand
-            if let name = target.as(DeclReferenceExprSyntax.self)?.baseName.text {
-                out.insert(name)
-            } else if let member = target.as(MemberAccessExprSyntax.self), member.base?.as(DeclReferenceExprSyntax.self)?.baseName.text == "self" {
-                out.insert(member.declName.baseName.text)
-            }
-        }
-        out.formUnion(assignedNames(child))
+/// `statement` (an `if`, `do` or `catch`) is the last thing a body that must not fall through runs
+/// (it returns a value, or is a `guard` body), so every path through it must exit. When the body is
+/// not recognized, true: a mutant that does not compile costs a build round and its function's
+/// other mutants, a mutant not made costs only itself.
+private func endsValueBody(_ statement: Syntax) -> Bool {
+    // An `else if` ends where its `if` does, a `catch` where its `do` does.
+    if let parent = statement.parent, parent.is(IfExprSyntax.self) { return endsValueBody(parent) }
+    if statement.is(CatchClauseSyntax.self), let doStmt = statement.parent?.parent { return endsValueBody(doStmt) }
+    guard let item = statement.parent?.as(CodeBlockItemSyntax.self) ?? statement.parent?.parent?.as(CodeBlockItemSyntax.self),
+          let list = item.parent?.as(CodeBlockItemListSyntax.self), let body = list.parent else { return true }
+    if list.last?.id != item.id || body.is(SourceFileSyntax.self) { return false }
+    // A closure's return type is not known here: it may return a value.
+    if body.is(ClosureExprSyntax.self) || returnsValue(body) { return true }
+    // A `case` ends where its `switch` does.
+    if body.is(SwitchCaseSyntax.self), let switchExpr = body.parent?.parent { return endsValueBody(switchExpr) }
+    guard body.is(CodeBlockSyntax.self), let owner = body.parent else { return true }
+    switch owner.kind {
+    case .ifExpr, .doStmt, .catchClause: return endsValueBody(owner)
+    case .functionDecl, .initializerDecl, .deinitializerDecl, .accessorDecl, .whileStmt, .forStmt, .repeatStmt, .deferStmt: return false
+    default: return true
     }
-    return out
 }
 
-/// Local constants and variables declared without a value (`let x: Int`) under `node`,
-/// outside nested closures and functions.
-private func uninitializedNames(in node: Syntax) -> Set<String> {
-    var out = Set<String>()
-    for child in node.children(viewMode: .sourceAccurate) where !isFunctionLike(child) {
-        if let binding = child.as(PatternBindingSyntax.self), binding.initializer == nil, binding.accessorBlock == nil,
-           let name = binding.pattern.as(IdentifierPatternSyntax.self)?.identifier.text {
-            out.insert(name)
-        }
-        out.formUnion(uninitializedNames(in: child))
-    }
-    return out
+/// Nodes under `node` outside nested closures and functions, where its locals are not.
+private func localNodes(_ node: Syntax) -> [Syntax] {
+    node.children(viewMode: .sourceAccurate).filter { !isFunctionLike($0) }.flatMap { [$0] + localNodes($0) }
+}
+
+/// `x` of `x = ...` and `self.x = ...`.
+private func assignedName(_ node: Syntax) -> String? {
+    guard let infix = node.as(InfixOperatorExprSyntax.self), infix.operator.is(AssignmentExprSyntax.self) else { return nil }
+    if let name = infix.leftOperand.as(DeclReferenceExprSyntax.self)?.baseName.text { return name }
+    guard let member = infix.leftOperand.as(MemberAccessExprSyntax.self), member.base?.as(DeclReferenceExprSyntax.self)?.baseName.text == "self" else { return nil }
+    return member.declName.baseName.text
+}
+
+/// `x` of `let x: Int` / `var x: Int`, declared without a value.
+private func uninitializedName(_ node: Syntax) -> String? {
+    guard let binding = node.as(PatternBindingSyntax.self), binding.initializer == nil, binding.accessorBlock == nil else { return nil }
+    return binding.pattern.as(IdentifierPatternSyntax.self)?.identifier.text
 }
 
 private let blockStatement: Mutator = { node, _ in

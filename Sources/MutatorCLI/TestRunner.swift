@@ -74,9 +74,9 @@ func discoverBundles(binPath: String) throws -> [TestBundle] {
     }
 }
 
-/// The bundle holding a test module: per test target (Swift Build), or the package's single one.
+/// The bundle holding the tests: the native build system builds one for the whole package.
 private func bundle(for module: String, in bundles: [TestBundle]) -> TestBundle? {
-    bundles.first { $0.name == module } ?? (bundles.count == 1 ? bundles[0] : bundles.first { $0.name.hasSuffix("PackageTests") })
+    bundles.count == 1 ? bundles[0] : bundles.first { $0.name.hasSuffix("PackageTests") }
 }
 
 /// The environment of a test process: ours without mutator variables, plus `extra`.

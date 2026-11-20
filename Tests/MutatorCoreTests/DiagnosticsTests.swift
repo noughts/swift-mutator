@@ -49,15 +49,13 @@ import Testing
         #expect(blamed.keys == Set(f.analysis.mutants.filter { $0.original == "a + b" }.map(\.key)))
     }
 
-    @Test func anErrorThatStaysIsBlamedOnTheNextStatementOut() {
-        let source = "func f(_ a: Int, _ b: Int) -> Int {\n    let c = a + b\n    return c * 2\n}"
+    @Test func anErrorThatStaysIsBlamedOnItsFunction() {
         // The statement's mutants were left out and the error is still there.
-        let analysis = analyze(file: "A.swift", source: source)
-        let first = Set(analysis.mutants.filter { $0.original == "a + b" }.map(\.key))
-        let f = InstrumentedFile(analysis: analysis, emission: emit(Array(source.utf8), analysis, excluding: first))
+        let (analysis, emission) = emitted("func f(_ a: Int, _ b: Int) -> Int {\n    let c = a + b\n    return c * 2\n}") { $0.original == "a + b" }
+        let f = InstrumentedFile(analysis: analysis, emission: emission)
         let blamed = blame([error(at: "let c", in: f)], files: ["A.swift": f])
-        #expect(blamed.keys == Set(f.emission.keys))
-        #expect(blamed.keys.isDisjoint(with: first))
+        #expect(!blamed.keys.isEmpty)
+        #expect(blamed.keys == Set(emission.keys))
     }
 
     @Test func errorsInFilesWithoutMutantsAreUnattributed() {

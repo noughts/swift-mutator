@@ -146,8 +146,13 @@ private func fnValues(_ source: String) -> [String] {
         #expect(summary("func f(_ c: Bool) -> Int { if c { return 1 } else { return 2 } }", .blockStatement).isEmpty)
         #expect(summary("func f(_ a: Bool, _ b: Bool) -> Int { if a { if b { return 1 } else { return 2 } } else { return 3 } }", .blockStatement).isEmpty)
         #expect(summary("func f() -> Int { do { return try g() } catch { throw E() } }", .blockStatement).isEmpty)
-        // Without an else, the code after the `if` returns instead.
+        #expect(summary("var v: Int { if c { return 1 } else { return 2 } }", .blockStatement).isEmpty)
+        #expect(summary("func f(_ x: Int, _ c: Bool) -> Int { switch x { case 0: if c { return 1 } else { return 2 } default: return 3 } }", .blockStatement).isEmpty)
+        #expect(summary("func f(_ x: Int?, _ c: Bool) -> Int { guard let x else { if c { return 1 } else { return 2 } }; return x }", .blockStatement).isEmpty)
+        // The code after the `if` returns instead, or nothing is returned at all.
         #expect(summary("func f(_ c: Bool) -> Int { if c { return 1 }; return 2 }", .blockStatement) == ["BlockStatement: { return 1 } -> {}"])
+        #expect(summary("func f(_ c: Bool) -> Int { if c { return 1 } else { log() }; return 2 }", .blockStatement) == ["BlockStatement: { return 1 } -> {}", "BlockStatement: { log() } -> {}"])
+        #expect(summary("func f(_ c: Bool) { if c { return } else { return } }", .blockStatement).filter { $0.hasPrefix("BlockStatement: { return }") }.count == 2)
     }
 }
 

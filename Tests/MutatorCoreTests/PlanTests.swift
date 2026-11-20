@@ -324,7 +324,7 @@ private func timeout(_ entry: PlanEntry) -> Int? {
     @Test func ignoresPreviousCoverageWhenTheScopeHashChanged() {
         let before = previous(["t1": ["a"]])
         let tests = [test("t1"), test("t2")]
-        let measure = testsToMeasure(previous: before, tests: tests, scopes: ["a.swift#f": "h2"], declarationScopes: [], extensions: [], full: false)
+        let measure = testsToMeasure(previous: before, tests: tests, scopes: ["a.swift#f": "h2"], extensions: [], full: false)
         #expect(measure == ["t1", "t2"])
         let merged = mergeCoverage(previous: before, measured: ["t1": [], "t2": ["a"]], tests: ["t1", "t2"], keys: ["a"])
         #expect(coverageByMutant(merged)["a"] == ["t2"])

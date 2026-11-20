@@ -61,17 +61,24 @@ public struct Scope: Hashable, Sendable {
     /// Hash of the scope's tokens (comments and whitespace dropped, nested scopes as holes).
     public let hash: String
     public let span: Span
-    /// Function-like (function, initializer, accessor, closure) rather than a declaration (type, global).
-    public let isFunction: Bool
-    /// An extension: it can add members and conformances to a type declared elsewhere.
-    public let isExtension: Bool
+    public enum Kind: Sendable {
+        /// Function, initializer, accessor, closure.
+        case function
+        /// Type or global.
+        case declaration
+        /// Adds members and conformances to a type declared elsewhere.
+        case `extension`
+    }
 
-    public init(id: String, hash: String, span: Span, isFunction: Bool, isExtension: Bool = false) {
+    public let kind: Kind
+
+    public var isFunction: Bool { kind == .function }
+
+    public init(id: String, hash: String, span: Span, kind: Kind) {
         self.id = id
         self.hash = hash
         self.span = span
-        self.isFunction = isFunction
-        self.isExtension = isExtension
+        self.kind = kind
     }
 
     public func key(file: String) -> String { "\(file)#\(id)" }
