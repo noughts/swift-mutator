@@ -211,14 +211,16 @@ private func canEmpty(_ block: CodeBlockSyntax) -> Bool {
 /// mutant does not compile. Swift checks this only once the module type-checks, so leaving it to
 /// the compiler costs a build round of its own.
 private func breaksFlow(_ block: CodeBlockSyntax, owner: Syntax) -> Bool {
+    let function = sequence(first: owner) { $0.parent }.first(where: isFunctionLike)
+    let uninitialized = Set(localNodes(function ?? owner.root).compactMap(uninitializedName))
+    // A branch that exits keeps a later use from seeing a value its siblings initialize.
     let completes = owner.is(DoStmtSyntax.self) || owner.is(CatchClauseSyntax.self) || owner.as(IfExprSyntax.self)?.elseBody != nil
-    if completes, alwaysExits(block), endsValueBody(owner) { return true }
+    if completes, alwaysExits(block), endsValueBody(owner) || !uninitialized.isEmpty { return true }
     let assigned = Set(localNodes(Syntax(block)).compactMap(assignedName))
     if assigned.isEmpty { return false }
-    let function = sequence(first: owner) { $0.parent }.first(where: isFunctionLike)
     // An initializer must set every stored property, with or without `self.`.
     if function?.is(InitializerDeclSyntax.self) == true { return true }
-    return !assigned.isDisjoint(with: localNodes(function ?? owner.root).compactMap(uninitializedName))
+    return !assigned.isDisjoint(with: uninitialized)
 }
 
 /// The block ends in `return` or `throw`, or in an `if` / `else` whose branches all do.

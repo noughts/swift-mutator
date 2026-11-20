@@ -133,6 +133,8 @@ private func fnValues(_ source: String) -> [String] {
         let source = "func f(_ c: Bool) -> Int { let x: Int; if c { x = 1 } else { x = 2 }; return x }"
         #expect(summary(source, .blockStatement).isEmpty)
         #expect(summary("func f(_ c: Bool) -> Int { var y: Int; do { y = try g() } catch { y = 0 }; return y }", .blockStatement).isEmpty)
+        // The branch that returns is all that keeps `x` from being used uninitialized.
+        #expect(summary("func f(_ a: Bool, _ b: Bool) -> Int { let x: Int; if a { x = 1 } else if b { x = 2 } else { return 0 }; return x }", .blockStatement).isEmpty)
         // Initialized where declared: the assignment may go.
         #expect(summary("func f(_ c: Bool) -> Int { var y = 0; if c { y = 1 }; return y }", .blockStatement) == ["BlockStatement: { y = 1 } -> {}"])
     }

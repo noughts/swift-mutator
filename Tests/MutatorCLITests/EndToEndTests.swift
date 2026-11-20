@@ -165,6 +165,9 @@ private func snapshot(_ root: URL) throws -> Snapshot {
             public func either(_ a: Int?, _ b: Int) -> Int { a ?? b }
             public func flag(_ a: Bool) -> Bool { !a && -items.count < 0 }
             public func pick(_ c: Bool) -> Int { if c { 1 } else { 2 } }
+            public func kind(_ n: Int) -> String { switch n { case 0: "zero" default: n > 0 ? "plus" : "minus" } }
+            public func phase(_ n: Int) -> String? { switch n { case 0: guard n < 1 else { return "a" }; return "b" default: return nil } }
+            public func sign(_ n: Int) -> Int { if n > 0 { return 1 } else if n < 0 { return -1 } else { return 0 } }
             public func risky(_ x: Int) throws -> Int { if x > 10 { throw CocoaError(.fileNoSuchFile) }; return x * 3 }
             public func work() async throws -> Int { try await Task.sleep(nanoseconds: 1); return try risky(1) + 1 }
             public func loop(_ n: Int) -> Int { var i = 0; var sum = 0; while i < n { sum += i; i += 1 }; repeat { sum -= 1 } while sum > 100; for x in items where x > 1 { sum += x }; return sum }
