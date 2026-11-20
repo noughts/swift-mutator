@@ -105,6 +105,8 @@ struct TestRunner: Sendable {
     /// Side effect: a home directory of its own for the run, removed afterwards. Tests run in
     /// parallel processes (a `.serialized` suite included), so files they keep in the home
     /// (Application Support, caches, preferences) would race, and a mutant would leave them behind.
+    /// `TMPDIR` points into it too, but on macOS Foundation's temporary directory ignores it
+    /// (`confstr(_CS_DARWIN_USER_TEMP_DIR)`): what tests put there stays in the user's.
     func run(_ ids: [String], environment: [String: String], timeoutMs: Int?) async -> TestRun {
         let home = FileManager.default.temporaryDirectory.appendingPathComponent("swift-mutator-home-\(UUID().uuidString)")
         let tmp = home.appendingPathComponent("tmp")
