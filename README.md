@@ -49,7 +49,7 @@ swift-mutator --list                   # list mutants without running them
 swift-mutator --fail-on-survived       # exit 2 if any mutant Survived (not detected)
 ```
 
-Add `.mutator/` to the target package's `.gitignore` (it holds the sandbox, snapshot, and reports).
+Add `.mutator/` to the target package's `.gitignore` (it holds the sandbox, snapshot, and reports). The sandbox's build products take about as much disk space as a debug build of the package and its tests (about 1 GB for a package of 190 source files and 1,700 tests). `.mutator/` can be deleted whenever you no longer need it; the next run then starts from scratch.
 
 Trying it on `Examples/Pricing` produces output like this (first run, a few seconds on an M-series Mac).
 

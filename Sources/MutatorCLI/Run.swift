@@ -117,6 +117,7 @@ func runMutation(_ options: Options) async throws -> Int32 {
         let keys = ((try? String(contentsOf: file, encoding: .utf8)) ?? "").split(separator: "\n").map(String.init)
         return (id: id, run: run, keys: Array(Set(keys)).sorted())
     }
+    try? fm.removeItem(at: coverageDir)
     let failing = dry.filter { if case .passed = $0.run.outcome { false } else { true } }
     if !failing.isEmpty {
         let details = failing.prefix(5).map { entry -> String in
