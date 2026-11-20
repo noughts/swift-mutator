@@ -10,19 +10,12 @@ public struct PlacementPlan: Hashable, Sendable {
     public let keys: [String]
 }
 
-public struct PlacedSpan: Hashable, Sendable {
-    public let span: Span
-    public let keys: [String]
-}
-
 public struct Emission: Sendable {
     public let code: String
     /// Keys of the placed mutants, in runtime index order.
     public let keys: [String]
     /// Output span of the mutated code of each placed mutant.
     public let mutantSpans: [String: Span]
-    /// Output span of each placement.
-    public let placementSpans: [PlacedSpan]
     /// Output offset -> original offset, as (output start, source start, inserted) segments.
     let segments: [(output: Int, source: Int, inserted: Bool)]
 
@@ -44,9 +37,6 @@ private struct Insert {
     let text: String
     /// (key, start, end) relative to `text`.
     var spans: [(String, Int, Int)] = []
-    /// Placement index this insert opens or closes.
-    var opens: Int?
-    var closes: Int?
 }
 
 public let activeEnvironment = "SWIFT_MUTATOR_ACTIVE"
@@ -61,30 +51,26 @@ public func emit(_ bytes: [UInt8], _ analysis: Analysis, excluding excluded: Set
         .sorted { $0.span.start != $1.span.start ? $0.span.start < $1.span.start : $0.span.end > $1.span.end }
     let source = String(decoding: bytes, as: UTF8.self)
     guard !plans.isEmpty else {
-        return Emission(code: source, keys: [], mutantSpans: [:], placementSpans: [], segments: [(0, 0, false)])
+        return Emission(code: source, keys: [], mutantSpans: [:], segments: [(0, 0, false)])
     }
     let keys = plans.flatMap(\.keys)
     let index = Dictionary(keys.enumerated().map { ($1, $0) }, uniquingKeysWith: { first, _ in first })
 
     var right: [Int: [Insert]] = [:]
     var left: [Int: [Insert]] = [:]
-    for (p, plan) in plans.enumerated() {
+    for plan in plans {
         let (prefix, suffix) = wrapper(bytes, plan, mutants: plan.keys.compactMap { mutants[$0] }, index: index)
-        var open = prefix
-        open.opens = p
-        right[plan.span.start, default: []].append(open)
+        right[plan.span.start, default: []].append(prefix)
         if let at = plan.implicitReturnAt {
             right[at, default: []].append(Insert(text: "return "))
         }
-        left[plan.span.end, default: []].insert(Insert(text: suffix, closes: p), at: 0)
+        left[plan.span.end, default: []].insert(Insert(text: suffix), at: 0)
     }
 
     var out: [UInt8] = []
     out.reserveCapacity(bytes.count * 2)
     var segments: [(output: Int, source: Int, inserted: Bool)] = []
     var mutantSpans: [String: Span] = [:]
-    var opened: [Int: Int] = [:]
-    var placementSpans: [PlacedSpan] = []
     var contentStart: Int?
     for i in 0 ... bytes.count {
         let inserts = (left[i] ?? []) + (right[i] ?? [])
@@ -92,12 +78,8 @@ public func emit(_ bytes: [UInt8], _ analysis: Analysis, excluding excluded: Set
         for insert in inserts {
             let at = out.count
             segments.append((at, i, true))
-            if let p = insert.opens { opened[p] = at }
             for (key, start, end) in insert.spans { mutantSpans[key] = Span(start: at + start, end: at + end) }
             out.append(contentsOf: Array(insert.text.utf8))
-            if let p = insert.closes, let start = opened[p] {
-                placementSpans.append(PlacedSpan(span: Span(start: start, end: out.count), keys: plans[p].keys))
-            }
         }
         guard i < bytes.count else { break }
         if contentStart == nil {
@@ -107,7 +89,7 @@ public func emit(_ bytes: [UInt8], _ analysis: Analysis, excluding excluded: Set
         out.append(bytes[i])
     }
     let code = String(decoding: out, as: UTF8.self) + runtime(keys: keys)
-    return Emission(code: code, keys: keys, mutantSpans: mutantSpans, placementSpans: placementSpans, segments: segments)
+    return Emission(code: code, keys: keys, mutantSpans: mutantSpans, segments: segments)
 }
 
 private func wrapper(_ bytes: [UInt8], _ plan: PlacementPlan, mutants: [Mutant], index: [String: Int]) -> (Insert, String) {

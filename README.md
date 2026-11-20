@@ -165,6 +165,7 @@ Weak mutation (classifying mutants that don't infect program state without runni
 - Tests run in parallel, one process each (`-j`), each with its own home directory. If tests that share other resources (files elsewhere, ports) interfere with each other, use `-j 1`.
 - The sandbox builds the whole package on the first run. After that, only files whose instrumented output changed are recompiled.
 - A mutant once judged `CompileError` isn't rechecked until its enclosing function changes.
+- Sources are compiled at their original path, so a test that writes files next to `#filePath` (a snapshot-testing library recording) writes them into the package, not the sandbox.
 - On macOS, a crash report may be generated for each mutant that crashes.
 
 ## Development
