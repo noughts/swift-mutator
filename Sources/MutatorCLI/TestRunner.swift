@@ -24,8 +24,9 @@ struct Toolchain: Sendable {
 
 enum TestOutcome: Sendable {
     case passed
-    /// Failing tests; empty when the run failed without naming one.
-    case failed([String], output: String)
+    /// Failing tests; empty when the run failed without naming one. Not `complete` when some
+    /// requested tests never ran: a crash stopped them, or they were in a later group.
+    case failed([String], complete: Bool, output: String)
     case timedOut
 }
 
@@ -104,13 +105,14 @@ struct TestRunner: Sendable {
         baseEnvironment = testEnvironment(toolchain.environment)
     }
 
-    /// Runs `ids` in order of first appearance per bundle and library; stops at the first failing group.
+    /// Runs `ids` in order of first appearance per bundle and library; stops at the first failing
+    /// group unless `exhaustive` (`--kill-matrix`, which needs every failing test).
     /// Side effect: a home directory of its own for the run, removed afterwards. Tests run in
     /// parallel processes (a `.serialized` suite included), so files they keep in the home
     /// (Application Support, caches, preferences) would race, and a mutant would leave them behind.
     /// `TMPDIR` points into it too, but on macOS Foundation's temporary directory ignores it
     /// (`confstr(_CS_DARWIN_USER_TEMP_DIR)`): what tests put there stays in the user's.
-    func run(_ ids: [String], environment: [String: String], timeoutMs: Int?) async -> TestRun {
+    func run(_ ids: [String], environment: [String: String], timeoutMs: Int?, exhaustive: Bool = false) async -> TestRun {
         let home = FileManager.default.temporaryDirectory.appendingPathComponent("swift-mutator-home-\(UUID().uuidString)")
         let tmp = home.appendingPathComponent("tmp")
         try? FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
@@ -128,20 +130,28 @@ struct TestRunner: Sendable {
             }
         }
         var total = 0
-        for group in groups {
+        var failed: [String] = []
+        var crashed = false
+        var output = ""
+        for (index, group) in groups.enumerated() {
             let remaining = timeoutMs.map { max($0 - total, 1) }
-            let (result, failed) = await runGroup(group.bundle, swiftTesting: group.swiftTesting, ids: group.ids, environment: env, timeoutMs: remaining)
+            let (result, failures) = await runGroup(group.bundle, swiftTesting: group.swiftTesting, ids: group.ids, environment: env, timeoutMs: remaining)
             total += result?.durationMs ?? 0
-            guard let result else { return TestRun(outcome: .failed([], output: "could not launch the tests of \(group.bundle.name)"), durationMs: total) }
+            guard let result else { return TestRun(outcome: .failed([], complete: false, output: "could not launch the tests of \(group.bundle.name)"), durationMs: total) }
             if result.timedOut { return TestRun(outcome: .timedOut, durationMs: total) }
             // Only the tail is kept: it is shown for a failing dry run, and killed mutants are many.
-            if result.status != 0 { return TestRun(outcome: .failed(failed(), output: String(result.output.suffix(4000))), durationMs: total) }
+            guard result.status != 0 else { continue }
+            let parsed = failures()
+            failed += parsed.failed
+            crashed = crashed || parsed.crashed
+            output = String(result.output.suffix(4000))
+            if !exhaustive { return TestRun(outcome: .failed(failed, complete: !crashed && index == groups.count - 1, output: output), durationMs: total) }
         }
-        return TestRun(outcome: .passed, durationMs: total)
+        return TestRun(outcome: output.isEmpty ? .passed : .failed(failed, complete: !crashed, output: output), durationMs: total)
     }
 
     /// The process result, and a parse of the failing tests (to call only when it failed).
-    private func runGroup(_ bundle: TestBundle, swiftTesting: Bool, ids: [String], environment: [String: String], timeoutMs: Int?) async -> (ProcessResult?, () -> [String]) {
+    private func runGroup(_ bundle: TestBundle, swiftTesting: Bool, ids: [String], environment: [String: String], timeoutMs: Int?) async -> (ProcessResult?, () -> TestFailures) {
         if swiftTesting {
             let events = FileManager.default.temporaryDirectory.appendingPathComponent("swift-mutator-events-\(UUID().uuidString).jsonl")
             defer { try? FileManager.default.removeItem(at: events) }

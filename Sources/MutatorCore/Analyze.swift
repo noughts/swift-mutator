@@ -25,6 +25,9 @@ public struct Analysis: Sendable {
     public let placements: [PlacementPlan]
     /// Spans of the statements and member declarations of runtime code (for blaming compiler errors).
     public let statements: [Span]
+    /// Infix operator expressions of runtime code with their operator token (for blaming compiler
+    /// errors reported at an operator, such as `Character == String`).
+    public let operators: [(expression: Span, operator: Span)]
     /// The file did not parse; nothing was mutated.
     public let parseError: Bool
 }
@@ -89,7 +92,7 @@ public func analyze(file: String, source: String, options: AnalyzeOptions = .ini
     let bytes = Array(source.utf8)
     let parsed = Parser.parse(source: source)
     if parsed.hasError {
-        return Analysis(mutants: [], scopes: [], placements: [], statements: [], parseError: true)
+        return Analysis(mutants: [], scopes: [], placements: [], statements: [], operators: [], parseError: true)
     }
     let tree = OperatorTable.standardOperators.foldAll(parsed) { _ in }
     let lines = LineIndex(bytes)
@@ -103,11 +106,13 @@ public func analyze(file: String, source: String, options: AnalyzeOptions = .ini
     var path: [String] = []
     var scopes: [Scope] = []
     var statements: [Span] = []
+    var operators: [(expression: Span, operator: Span)] = []
     var found: [Found] = []
     walk(tree, component: "", visit: { node, component in
         path.append(component)
         if let scope = tracker.enter(node, depth: path.count) { scopes.append(scope) }
         if node.is(CodeBlockItemSyntax.self) || node.is(MemberBlockItemSyntax.self) { statements.append(node.span) }
+        if let infix = node.as(InfixOperatorExprSyntax.self) { operators.append((infix.span, infix.operator.span)) }
         guard let frame = tracker.current else { return }
         let astPath = path[frame.depth...].joined(separator: "/")
         for mutate in mutators {
@@ -152,9 +157,11 @@ public func analyze(file: String, source: String, options: AnalyzeOptions = .ini
     }
 
     let plans = placements.map { p in
-        PlacementPlan(span: replacedSpan(p.node), kind: p.kind, implicitReturnAt: implicitReturnOffset(p.node), keys: p.keys)
+        // A condition switch replaces nothing: it is inserted after the last condition.
+        let span = p.kind == .condition ? Span(start: p.node.span.end, end: p.node.span.end) : replacedSpan(p.node)
+        return PlacementPlan(span: span, kind: p.kind, implicitReturnAt: implicitReturnOffset(p.node), keys: p.keys)
     }
-    return Analysis(mutants: mutants, scopes: scopes, placements: plans, statements: statements, parseError: false)
+    return Analysis(mutants: mutants, scopes: scopes, placements: plans, statements: statements, operators: operators, parseError: false)
 }
 
 /// The source with one mutant applied (for reports and previews).

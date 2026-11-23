@@ -3,8 +3,16 @@ import Foundation
 // Which tests failed in a run: from XCTest's console output and swift-testing's event stream.
 // A test that started but never ended crashed the process.
 
-/// Failed or crashed tests among `requested` (XCTest ids `Module.Class/method`), in requested order.
-public func failedXCTests(output: String, requested: [String]) -> [String] {
+public struct TestFailures: Equatable, Sendable {
+    /// Failed or crashed tests among the requested ones, in requested order.
+    public let failed: [String]
+    /// The process crashed: the tests after the crash never ran (and with swift-testing's parallel
+    /// runs, every test in flight at the crash counts as failed).
+    public let crashed: Bool
+}
+
+/// Failed or crashed tests among `requested` (XCTest ids `Module.Class/method`).
+public func failedXCTests(output: String, requested: [String]) -> TestFailures {
     var started: [String] = []
     var ended = Set<String>()
     var failed = Set<String>()
@@ -21,8 +29,9 @@ public func failedXCTests(output: String, requested: [String]) -> [String] {
         default: ended.insert(id)
         }
     }
-    failed.formUnion(started.filter { !ended.contains($0) })
-    return requested.filter { id in failed.contains(id) || failed.contains { id.hasSuffix(".\($0)") } }
+    let crashed = started.filter { !ended.contains($0) }
+    failed.formUnion(crashed)
+    return TestFailures(failed: requested.filter { id in failed.contains(id) || failed.contains { id.hasSuffix(".\($0)") } }, crashed: !crashed.isEmpty)
 }
 
 private struct Event: Decodable {
@@ -44,7 +53,7 @@ public func swiftTestingId(_ eventId: String) -> String {
 }
 
 /// Failed or crashed tests among `requested` from a swift-testing JSON Lines event stream.
-public func failedSwiftTestingTests(eventStream: String, requested: [String]) -> [String] {
+public func failedSwiftTestingTests(eventStream: String, requested: [String]) -> TestFailures {
     var started: [String] = []
     var ended = Set<String>()
     var failed = Set<String>()
@@ -60,8 +69,9 @@ public func failedSwiftTestingTests(eventStream: String, requested: [String]) ->
         default: break
         }
     }
-    failed.formUnion(started.filter { !ended.contains($0) && $0.contains("(") })
-    return requested.filter(failed.contains)
+    let crashed = started.filter { !ended.contains($0) && $0.contains("(") }
+    failed.formUnion(crashed)
+    return TestFailures(failed: requested.filter(failed.contains), crashed: !crashed.isEmpty)
 }
 
 /// swift-testing tests have a function name with parentheses; XCTest ids never do.
@@ -69,6 +79,9 @@ public func isSwiftTestingId(_ id: String) -> Bool { id.hasSuffix(")") }
 
 /// `Module.Type/test` -> `Module`.
 public func testModule(_ id: String) -> String { String(id.prefix { $0 != "." }) }
+
+/// `Module.Type/test` -> `Type/test`.
+public func testName(_ id: String) -> String { String(id.dropFirst(testModule(id).count + 1)) }
 
 /// `swift test list` output -> test ids.
 public func parseTestList(_ output: String) -> [String] {

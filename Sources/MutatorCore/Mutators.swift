@@ -140,7 +140,22 @@ private func testPosition(_ node: Syntax) -> TestPosition? {
     return nil
 }
 
-private let conditionalExpression: Mutator = { node, _ in
+/// `if let a, let b` -> `if let a, let b, false`: a condition list without a boolean condition has
+/// no expression to replace, so a `false` is appended (the `true` direction has no type-free spelling).
+private func bindingsOnly(_ list: ConditionElementListSyntax, _ ctx: MutatorContext) -> [Candidate] {
+    guard let owner = list.parent,
+          owner.is(IfExprSyntax.self) || owner.is(GuardStmtSyntax.self) || owner.is(WhileStmtSyntax.self),
+          list.allSatisfy({ element in
+              switch element.condition {
+              case .optionalBinding, .matchingPattern: true
+              default: false
+              }
+          }) else { return [] }
+    return [whole(Syntax(list), .conditionalExpression, ctx.text(list) + ", false")]
+}
+
+private let conditionalExpression: Mutator = { node, ctx in
+    if let list = node.as(ConditionElementListSyntax.self) { return bindingsOnly(list, ctx) }
     guard node.is(ExprSyntax.self) else { return [] }
     switch testPosition(node) {
     case let .branch(first):

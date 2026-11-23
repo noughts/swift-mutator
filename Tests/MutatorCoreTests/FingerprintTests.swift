@@ -62,4 +62,16 @@ import Testing
         let after = fingerprints(helper: "2")
         #expect(ids.allSatisfy { before[$0] != after[$0] })
     }
+
+    @Test func locatesTestsOfEveryKind() {
+        let files = [
+            TestSource(path: "Tests/T/CartTests.swift", text: "import XCTest\nfinal class CartTests: XCTestCase {\n    func testAdd() {\n        XCTAssert(true)\n    }\n}\n"),
+            TestSource(path: "Tests/T/Other.swift", text: "import Testing\n@Suite struct Suite {\n    @Test(arguments: [1]) func check(x: Int) {}\n}\n@Test func free() {}\n"),
+        ]
+        let found = testLocations(ids: ids, modules: ["T": files])
+        #expect(found["T.CartTests/testAdd"] == TestLocation(file: "Tests/T/CartTests.swift", location: Location(start: Position(line: 3, column: 4), end: Position(line: 5, column: 5))))
+        #expect(found["T.Suite/check(x:)"]?.location.start == Position(line: 3, column: 4))
+        #expect(found["T.free()"]?.file == "Tests/T/Other.swift")
+        #expect(found["T.CartTests/testRemove"] == nil)
+    }
 }

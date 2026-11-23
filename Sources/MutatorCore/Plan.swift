@@ -26,14 +26,17 @@ public struct PlanInput: Sendable {
     public let previous: Snapshot?
     public let timeoutFactor: Double
     public let timeoutMs: Int
+    /// `--kill-matrix`: a Killed result is reused only when its kill set is complete and current.
+    public let killMatrix: Bool
 
-    public init(mutants: [Mutant], tests: [TestInfo], coverage: [String: [String]], previous: Snapshot?, timeoutFactor: Double = 1.5, timeoutMs: Int = 5000) {
+    public init(mutants: [Mutant], tests: [TestInfo], coverage: [String: [String]], previous: Snapshot?, timeoutFactor: Double = 1.5, timeoutMs: Int = 5000, killMatrix: Bool = false) {
         self.mutants = mutants
         self.tests = tests
         self.coverage = coverage
         self.previous = previous
         self.timeoutFactor = timeoutFactor
         self.timeoutMs = timeoutMs
+        self.killMatrix = killMatrix
     }
 }
 
@@ -111,7 +114,12 @@ public func plan(_ input: PlanInput) -> [PlanEntry] {
     return input.mutants.map { m in
         if m.ignored != nil { return .ignored(m) }
         let prev = prevByKey[m.key]
-        if let prev, canReuse(m, prev) { return .reuse(m, prev) }
+        if let prev, canReuse(m, prev) {
+            // A Killed result is reused because one killer still kills it: the other covering tests
+            // did not run, so its kill set is complete only when they are the same tests as before.
+            if prev.status != .killed || (prev.incomplete != true && sameTests(m, prev)) { return .reuse(m, prev) }
+            if !input.killMatrix { return .reuse(m, prev.markedIncomplete()) }
+        }
         var seen = Set<String>()
         // A covering test with no known duration is kept, and runs last.
         let selected = (input.coverage[m.key] ?? []).filter { seen.insert($0).inserted }
@@ -139,7 +147,7 @@ public func triage(_ entries: [PlanEntry], compileErrors: [Mutant], coverage: [S
         case let .ignored(m):
             decided.append(ReportEntry(mutant: m, status: .ignored, source: .decided))
         case let .reuse(m, result):
-            decided.append(ReportEntry(mutant: m, status: result.status, source: .reuse, killedBy: result.killedBy, coveredBy: coverage[m.key] ?? result.coveredBy))
+            decided.append(ReportEntry(mutant: m, status: result.status, source: .reuse, killedBy: result.killedBy, coveredBy: coverage[m.key] ?? result.coveredBy, incomplete: result.incomplete ?? false))
         case let .noCoverage(m):
             decided.append(ReportEntry(mutant: m, status: .noCoverage, source: .decided))
         case let .run(m, tests, timeoutMs):

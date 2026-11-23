@@ -69,9 +69,10 @@ public func blame(_ errors: [CompilerError], files: [String: InstrumentedFile]) 
 }
 
 /// The placed mutants an error at `offset` (of the instrumented code) is blamed on: the mutant
-/// whose code holds it, else the first of these that has any: the smallest statement around it
-/// (a type error shows anywhere in the expression a mutant broke), the innermost function around
-/// it, the outermost one, the file. Blamed mutants are left out of the next build, so an error
+/// whose code holds it, else the first of these that has any: the operands of the infix operator
+/// it points at (`c == ""` with `c` a `Character` is reported at `==`), the smallest statement
+/// around it (a type error shows anywhere in the expression a mutant broke), the innermost function
+/// around it, the outermost one, the file. Blamed mutants are left out of the next build, so an error
 /// that stays is blamed on the next of these, a build round later.
 private func suspects(at offset: Int, in file: InstrumentedFile) -> [String] {
     let emission = file.emission
@@ -83,6 +84,10 @@ private func suspects(at offset: Int, in file: InstrumentedFile) -> [String] {
     let mutants = file.analysis.mutants.filter { placed.contains($0.key) }
     let source = emission.sourceOffset(offset)
     let around = { (spans: [Span]) in spans.filter { $0.start <= source && source <= $0.end }.sorted { size($0) < size($1) } }
+    if let infix = file.analysis.operators.first(where: { $0.operator.contains(offset: source) }) {
+        let operands = mutants.filter { infix.expression.contains($0.span) && !$0.span.contains(infix.operator) }.map(\.key)
+        if !operands.isEmpty { return operands }
+    }
     let functions = around(file.analysis.scopes.filter(\.isFunction).map(\.span))
     for span in [around(file.analysis.statements).first, functions.first, functions.last].compactMap({ $0 }) {
         let inside = mutants.filter { span.contains($0.span) }.map(\.key)

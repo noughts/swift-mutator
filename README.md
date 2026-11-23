@@ -27,7 +27,7 @@ On top of the mechanisms inherited from the original, swift-mutator adds mechani
 Download the binary of the [latest release](https://github.com/noughts/swift-mutator/releases/latest) (Apple silicon, macOS 13 or later); the release notes have the command and the SHA-256:
 
 ```bash
-curl -fsSL https://github.com/noughts/swift-mutator/releases/download/v0.2.0/swift-mutator-0.2.0-macos-arm64.tar.gz | tar -xz
+curl -fsSL https://github.com/noughts/swift-mutator/releases/download/v0.3.0/swift-mutator-0.3.0-macos-arm64.tar.gz | tar -xz
 ```
 
 This extracts `swift-mutator` into the current directory; move it to a directory on your PATH. The binary is not signed: downloaded with `curl` it runs as is, but a copy downloaded with a browser is blocked by Gatekeeper until you remove its quarantine (`xattr -d com.apple.quarantine swift-mutator`).
@@ -59,6 +59,7 @@ swift-mutator --since main             # PR mode: only mutants in the diff again
 swift-mutator --reporter text --reporter html --reporter json
 swift-mutator --list                   # list mutants without running them
 swift-mutator --fail-on-survived       # exit 2 if any mutant Survived (not detected)
+swift-mutator --kill-matrix            # also list tests that detect nothing, or add nothing over another test
 ```
 
 Add `.mutator/` to the target package's `.gitignore` (it holds the sandbox, snapshot, and reports). The sandbox's build products take about as much disk space as a debug build of the package and its tests (about 1 GB for a package of 190 source files and 1,700 tests). `.mutator/` can be deleted whenever you no longer need it; the next run then starts from scratch.
@@ -85,6 +86,14 @@ Rerunning without changes performs no dry runs and runs no mutants. Editing a si
 
 - **not detected** (`Survived`): Tests reach the mutant, but none of them fails. Strengthen an assertion, or disable it as an equivalent mutant.
 - **not reached** (`NoCoverage`): No test reaches the mutant. Add a test case.
+
+### Kill matrix
+
+`--kill-matrix` adds to the text summary and to `mutation.json` (`killMatrix`) the tests that detect nothing (they reach mutants but kill none), the tests that reach no mutant, the tests whose kill set is a strict subset of another test's (`subsumed`, a subsuming test of the same file listed first), and groups of tests with the same kill set (`duplicates`). Each test is shown with its file and line. As in the original, only mutants whose run executed every covering test count: `Timeout` and `CompileError` are left out, a mutant whose test process crashed is incomplete, and in this mode every test group of a mutant runs, and a `Killed` result is reused only when its covering tests are the ones it ran with.
+
+These are candidates for review, not for deletion: a test can pin behaviour no mutant represents, such as synthesized `Codable` (missing fields, unknown cases, encoded keys), raw values and constants, resource files, code compiled into the test target from outside the package, or the `nil` path of `guard let`.
+
+`mutation.json` lists every collected test under `testFiles`, keyed by its source file with its location and the file's source, so the HTML report shows the tests in their source (a test whose function is not found is listed under its module).
 
 ### Disabling mutants
 
@@ -133,7 +142,7 @@ report          text summary, plus JSON / HTML in the mutation-testing-elements 
 | ArithmeticOperator | `a + b` → `a - b`, `*`↔`/`, `%`→`*`, `&+`↔`&-` | `+` with string or array literals is skipped |
 | EqualityOperator | `<` → `<=` / `>=`, `==` ↔ `!=`, `===` ↔ `!==` | Same |
 | LogicalOperator | `&&` ↔ `\|\|`, `a ?? b` → `b` | `??` is replaced with its right-hand side (keeps the type) |
-| ConditionalExpression | `if` / `guard` / ternary conditions → `true` / `false`, `while` / `repeat` → `false` | Comma-separated conditions are treated like `&&` |
+| ConditionalExpression | `if` / `guard` / ternary conditions → `true` / `false`, `while` / `repeat` → `false`; a condition list of bindings only (`guard let a, let b`, `if case .x = y`) gets `, false` appended | Comma-separated conditions are treated like `&&` |
 | BooleanLiteral | `true` ↔ `false`, `!x` → `x` | Same |
 | UnaryOperator | `-x` → `x`, `~x` → `x` | Removal only (as in cargo-mutants) |
 | AssignmentOperator | `+=` ↔ `-=`, `*=` ↔ `/=`, `<<=` ↔ `>>=`, `&=` ↔ `\|=` | Same |
@@ -149,7 +158,7 @@ report          text summary, plus JSON / HTML in the mutation-testing-elements 
 
 The original's ArrowFunction (Swift has no `undefined`) and UpdateOperator (Swift has no `++` / `--`) are not ported.
 
-No mutants are placed in: the bodies of `@inlinable` / `@_alwaysEmitIntoClient` / `@_transparent` declarations (they are copied into clients and can't reference the per-file runtime), default arguments, enum raw values, attribute and macro arguments, `#if` conditions, name-binding patterns (`case let x`, `case .some(let x)`), types, and types that are called, such as `[Int]()`. Expression patterns without bindings (`case "GET":`, `case a == b:`) are mutated.
+No mutants are placed in: the bodies of `@inlinable` / `@_alwaysEmitIntoClient` / `@_transparent` declarations (they are copied into clients and can't reference the per-file runtime), default arguments, enum raw values, attribute and macro arguments, `#if` conditions, name-binding patterns (`case let x`, `case .some(let x)`), types, and types that are called, such as `[Int]()`. An optional binding is not forced to succeed (that has no spelling that compiles without types), so the `nil` path of `guard let x else { return nil }` has no mutant of its own. Expression patterns without bindings (`case "GET":`, `case a == b:`) are mutated.
 
 ## Mapping to mizchi/mutator
 
@@ -161,6 +170,7 @@ No mutants are placed in: the bodies of `@inlinable` / `@_alwaysEmitIntoClient` 
 | `core/src/arid.ts`, `disable.ts`, `hash.ts`, `text.ts` | `Arid.swift`, `Disable.swift`, `Hash.swift` (the same cyrb53), `Text.swift` |
 | `core/src/diff.ts`, `cli/src/since.ts`, `git.ts` | `Diff.swift`, `Since.swift`, `Sources/MutatorCLI/Git.swift` |
 | `core/src/plan.ts`, `cli/src/coverage-cache.ts` | `Plan.swift`, `DryRun.swift`, `Fingerprint.swift` |
+| `cli/src/kill-matrix.ts` | `KillMatrix.swift` |
 | `cli/src/mte-report.ts`, `report.ts`, `status.ts` | `Report.swift` |
 | `@mizchi/mutator-typecheck` | `Diagnostics.swift` (identifies non-compiling mutants from compiler diagnostics) |
 | `@mizchi/mutator-vitest` (Vite transform, sessions) | `Sources/MutatorCLI/Sandbox.swift`, `TestRunner.swift`, `TestOutput.swift` |
@@ -170,7 +180,7 @@ No mutants are placed in: the bodies of `@inlinable` / `@_alwaysEmitIntoClient` 
 
 ### Features not ported
 
-Weak mutation (classifying mutants that don't infect program state without running them), `--kill-matrix`, `--reporter simplify` / `agent`, `select-tests`, `mutator accept`, critical regions, CI sharding, `--watch`, plugins, the static call graph (`--experimental-callgraph`), `--mutants-per-line` / `--time-budget`, and configuration files.
+Weak mutation (classifying mutants that don't infect program state without running them), `--reporter simplify` / `agent`, `select-tests`, `mutator accept`, critical regions, CI sharding, `--watch`, plugins, the static call graph (`--experimental-callgraph`), `--mutants-per-line` / `--time-budget`, and configuration files.
 
 ## Limitations
 
@@ -193,10 +203,10 @@ swift test
 To release, set `toolVersion` in `Sources/MutatorCLI/Options.swift` to the new version, merge it into main, and on an Apple silicon Mac, from a clean checkout of main, run:
 
 ```bash
-scripts/release.sh 0.2.0
+scripts/release.sh 0.3.0
 ```
 
-It builds the release binary, checks that it is arm64 and reports that version, and publishes it with `gh` as release `v0.2.0` (tagging the current commit), with its SHA-256 in the notes.
+It builds the release binary, checks that it is arm64 and reports that version, and publishes it with `gh` as release `v0.3.0` (tagging the current commit), with its SHA-256 in the notes.
 
 Most of the tests are ported from the original's tests. Where the original's input is TypeScript / JavaScript, it has been rewritten as Swift code.
 

@@ -74,6 +74,24 @@ private func report(thresholds: Thresholds = Thresholds()) -> MTEReport {
         #expect(tests["MTests"]?.tests.map(\.name) == ["AddTests/testSums", "AddTests/testZero"])
     }
 
+    @Test func testFilesAreKeyedByPathWithLocationsAndListEveryCollectedTest() throws {
+        let testSource = "import XCTest\nfinal class AddTests: XCTestCase {\n    func testSums() {}\n    func testZero() {}\n    func testUnused() {}\n}\n"
+        let path = "Tests/MTests/AddTests.swift"
+        let ids = ["MTests.AddTests/testSums", "MTests.AddTests/testUnused", "MTests.AddTests/testZero", "MTests.Gone/testX"]
+        let catalog = TestCatalog(ids: ids, locations: testLocations(ids: ids, modules: ["MTests": [TestSource(path: path, text: testSource)]]), sources: [path: testSource])
+        let tests = mutationTestingReport(entries, sources: sources, projectRoot: "/p", version: "0", thresholds: Thresholds(), diffOnly: false, tests: catalog).testFiles
+        #expect(tests.keys.sorted() == ["MTests", path])
+        let file = try #require(tests[path])
+        #expect(file.source == testSource)
+        #expect(file.tests.map(\.id) == ["MTests.AddTests/testSums", "MTests.AddTests/testUnused", "MTests.AddTests/testZero"])
+        let location = try #require(file.tests[0].location)
+        let span: [Int] = [location.start.line, location.start.column, location.end.line, location.end.column]
+        #expect(span == [3, 5, 3, 23])
+        // Not found in the sources: grouped by module, without a location.
+        #expect(tests["MTests"]?.tests.map(\.id) == ["MTests.Gone/testX"])
+        #expect(tests["MTests"]?.tests.first?.location == nil)
+    }
+
     @Test func carriesTheConfiguredThresholds() {
         #expect(report(thresholds: Thresholds(high: 90, low: 70, breakAt: 50)).thresholds == ["high": 90, "low": 70])
     }

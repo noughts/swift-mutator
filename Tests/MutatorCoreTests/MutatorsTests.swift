@@ -113,6 +113,25 @@ private func fnValues(_ source: String) -> [String] {
     }
 }
 
+@Suite struct ConditionalExpressionOfBindingsTests {
+    @Test func aConditionListOfBindingsOnlyGetsAFalseAppended() {
+        #expect(summary("func f(_ a: Int?, _ b: Int?) { guard let a, let b else { return }; g(a, b) }", .conditionalExpression) == ["ConditionalExpression: let a, let b -> let a, let b, false"])
+        #expect(summary("func f(_ x: E) { if case .a = x { g() } }", .conditionalExpression) == ["ConditionalExpression: case .a = x -> case .a = x, false"])
+        #expect(summary("func f() { while let x = next() { g(x) } }", .conditionalExpression) == ["ConditionalExpression: let x = next() -> let x = next(), false"])
+    }
+
+    @Test func aListWithABooleanConditionKeepsItsOwnMutants() {
+        #expect(summary("func f(_ a: Int?) { if let a, a > 1 { g() } }", .conditionalExpression) == ["ConditionalExpression: a > 1 -> true", "ConditionalExpression: a > 1 -> false"])
+    }
+
+    @Test func theSwitchIsAppendedToTheList() {
+        let source = "func f(_ a: Int?) -> Int {\n    guard let a else { return 0 }\n    return a\n}"
+        let analysis = analyze(file: "A.swift", source: source)
+        let code = emit(Array(source.utf8), analysis).code
+        #expect(code.contains(/guard let a, !__mutator_on\(\d+\) else/))
+    }
+}
+
 @Suite struct ConditionalExpressionInASwitchCaseTests {
     @Test func aComparisonUsedAsACasePatternIsMutatedLikeAnyOtherComparison() {
         #expect(summary("switch x { case a == b: f() default: break }", .conditionalExpression) == ["ConditionalExpression: a == b -> true", "ConditionalExpression: a == b -> false"])
