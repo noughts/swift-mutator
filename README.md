@@ -24,6 +24,16 @@ On top of the mechanisms inherited from the original, swift-mutator adds mechani
 
 ## Usage
 
+Download the binary of the [latest release](https://github.com/noughts/swift-mutator/releases/latest) (Apple silicon, macOS 13 or later); the release notes have the command and the SHA-256:
+
+```bash
+curl -fsSL https://github.com/noughts/swift-mutator/releases/download/v0.2.0/swift-mutator-0.2.0-macos-arm64.tar.gz | tar -xz
+```
+
+This extracts `swift-mutator` into the current directory; move it to a directory on your PATH. The binary is not signed: downloaded with `curl` it runs as is, but a copy downloaded with a browser is blocked by Gatekeeper until you remove its quarantine (`xattr -d com.apple.quarantine swift-mutator`).
+
+Or build it from source:
+
 ```bash
 git clone https://github.com/noughts/swift-mutator.git
 ```
@@ -32,8 +42,10 @@ git clone https://github.com/noughts/swift-mutator.git
 cd swift-mutator && swift build -c release
 ```
 
+Then run it on a package:
+
 ```bash
-.build/release/swift-mutator --root path/to/YourPackage
+swift-mutator --root path/to/YourPackage
 ```
 
 If you put `swift-mutator` on your PATH, you can also invoke it as `swift mutator` (`swift` runs executables named `swift-<name>` as subcommands).
@@ -177,6 +189,14 @@ swift test
 
 - `MutatorCoreTests`: unit tests for the pure functions.
 - `MutatorCLITests`: integration tests that actually go through `swift build`, `swiftc`, and test processes; they take about a minute.
+
+To release, set `toolVersion` in `Sources/MutatorCLI/Options.swift` to the new version, merge it into main, and on an Apple silicon Mac, from a clean checkout of main, run:
+
+```bash
+scripts/release.sh 0.2.0
+```
+
+It builds the release binary, checks that it is arm64 and reports that version, and publishes it with `gh` as release `v0.2.0` (tagging the current commit), with its SHA-256 in the notes.
 
 Most of the tests are ported from the original's tests. Where the original's input is TypeScript / JavaScript, it has been rewritten as Swift code.
 
