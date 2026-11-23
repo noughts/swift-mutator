@@ -18,14 +18,17 @@ public struct ReportEntry: Sendable {
     public let source: EntrySource
     public let killedBy: [String]
     public let coveredBy: [String]
+    /// Some covering tests never ran (a crash stopped them): `killedBy` is partial.
+    public let incomplete: Bool
     public var focus: Focus?
 
-    public init(mutant: Mutant, status: MutantStatus, source: EntrySource, killedBy: [String] = [], coveredBy: [String] = [], focus: Focus? = nil) {
+    public init(mutant: Mutant, status: MutantStatus, source: EntrySource, killedBy: [String] = [], coveredBy: [String] = [], incomplete: Bool = false, focus: Focus? = nil) {
         self.mutant = mutant
         self.status = status
         self.source = source
         self.killedBy = killedBy
         self.coveredBy = coveredBy
+        self.incomplete = incomplete
         self.focus = focus
     }
 }
@@ -94,7 +97,21 @@ public func reported(_ entries: [ReportEntry], diffOnly: Bool) -> [ReportEntry] 
     diffOnly ? entries.filter { $0.focus != nil } : entries
 }
 
-public func formatSummary(_ entries: [ReportEntry], facts: RunFacts, thresholds: Thresholds) -> String {
+/// Every collected test, where it is, and the sources of the test files.
+public struct TestCatalog: Sendable {
+    public let ids: [String]
+    public let locations: [String: TestLocation]
+    /// Test file path -> its text.
+    public let sources: [String: String]
+
+    public init(ids: [String] = [], locations: [String: TestLocation] = [:], sources: [String: String] = [:]) {
+        self.ids = ids
+        self.locations = locations
+        self.sources = sources
+    }
+}
+
+public func formatSummary(_ entries: [ReportEntry], facts: RunFacts, thresholds: Thresholds, killMatrix: KillMatrix? = nil, tests: TestCatalog = TestCatalog()) -> String {
     let shown = reported(entries, diffOnly: facts.diffOnly)
     let count = { (status: MutantStatus) in shown.filter { $0.status == status }.count }
     let percent = scorePercent(shown, diffOnly: facts.diffOnly)
@@ -124,7 +141,34 @@ public func formatSummary(_ entries: [ReportEntry], facts: RunFacts, thresholds:
         lines.append("killed before, undetected now (the tests that killed it are gone):")
         lines += rechecked.map(describe)
     }
+    if let killMatrix { lines += killMatrixSection(killMatrix, locations: tests.locations) }
     return lines.joined(separator: "\n")
+}
+
+private let maxListed = 20
+
+private func plural(_ n: Int, _ word: String) -> String { "\(n) \(word)\(n == 1 ? "" : "s")" }
+
+private func killMatrixSection(_ k: KillMatrix, locations: [String: TestLocation]) -> [String] {
+    let at = { (test: String) in locations[test].map { "\(test)  (\($0.file):\($0.location.start.line))" } ?? test }
+    var excluded: [String] = []
+    if k.mutants.timeout > 0 { excluded.append("\(k.mutants.timeout) timed out") }
+    if k.mutants.incomplete > 0 { excluded.append("\(k.mutants.incomplete) without one (not run, or a crash stopped the tests)") }
+    var lines = ["", "kill matrix: \(plural(k.mutants.full, "mutant")) with a full matrix, \(plural(k.tests, "collected test"))" + (excluded.isEmpty ? "" : "; excluded: " + excluded.joined(separator: ", "))]
+    lines.append("  candidates for review, not for deletion: a test can pin behaviour no mutant represents (synthesized Codable, raw values and constants, resources, code compiled in from outside the package, the nil path of `guard let`)")
+    let section = { (heading: String, items: [String]) in
+        guard !items.isEmpty else { return }
+        lines += ["", heading] + items.prefix(maxListed).map { "  " + $0 }
+        if items.count > maxListed { lines.append("  … \(items.count - maxListed) more (see --reporter json)") }
+    }
+    section("detects nothing - covers mutants, but kills none of them:", k.noKills.map(at))
+    section("no viable mutant reached - detection power is not measured:", k.observations.filter { $0.status == .notReached }.map { at($0.test) })
+    section("measurement incomplete - no conclusion about detection power:", k.observations.filter { $0.status == .incomplete }.map { at($0.test) })
+    section("subsumed - another test kills every mutant it kills, and more:", k.subsumed.map { s in
+        "\(at(s.test))  subsumed by \(s.by[0])\(s.by.count > 1 ? " (+\(s.by.count - 1) more)" : "")  (\(plural(s.kills, "kill")))"
+    })
+    section("duplicates - the same kill set:", k.duplicates.map { "\($0.tests.joined(separator: " = "))  (\(plural($0.kills, "kill")))" })
+    return lines
 }
 
 // ---- mutation-testing-elements ------------------------------------------------
@@ -172,14 +216,19 @@ public struct MTEReport: Codable, Sendable {
         public struct Test: Codable, Sendable {
             public let id: String
             public let name: String
+            public let location: Range?
         }
 
+        public let source: String?
         public let tests: [Test]
     }
 
     public let files: [String: File]
-    /// Tests referenced by any mutant, grouped by test module (Swift test ids are `Module.Type/test`).
+    /// Every collected test, grouped by its source file; a test whose function was not found is
+    /// grouped by its module (Swift test ids are `Module.Type/test`).
     public let testFiles: [String: TestFile]
+    /// swift-mutator extension (the schema allows extra fields), with --kill-matrix.
+    public let killMatrix: KillMatrix?
 }
 
 /// 1-based line and column, the column counted in UTF-16 units like the report viewer does.
@@ -189,7 +238,11 @@ private func point(_ position: Position, lines: LineIndex, bytes: [UInt8]) -> MT
     return MTEReport.Point(line: position.line, column: prefix.utf16.count + 1)
 }
 
-public func mutationTestingReport(_ entries: [ReportEntry], sources: [String: String], projectRoot: String, version: String, thresholds: Thresholds, diffOnly: Bool) -> MTEReport {
+private func range(_ location: Location, lines: LineIndex, bytes: [UInt8]) -> MTEReport.Range {
+    MTEReport.Range(start: point(location.start, lines: lines, bytes: bytes), end: point(location.end, lines: lines, bytes: bytes))
+}
+
+public func mutationTestingReport(_ entries: [ReportEntry], sources: [String: String], projectRoot: String, version: String, thresholds: Thresholds, diffOnly: Bool, tests: TestCatalog = TestCatalog(), killMatrix: KillMatrix? = nil) -> MTEReport {
     var files: [String: MTEReport.File] = [:]
     for (file, group) in Dictionary(grouping: entries, by: \.mutant.file) {
         let source = sources[file] ?? ""
@@ -203,7 +256,7 @@ public func mutationTestingReport(_ entries: [ReportEntry], sources: [String: St
                 id: m.key,
                 mutatorName: m.mutator.rawValue,
                 replacement: m.replacement,
-                location: MTEReport.Range(start: point(m.location.start, lines: lines, bytes: bytes), end: point(m.location.end, lines: lines, bytes: bytes)),
+                location: range(m.location, lines: lines, bytes: bytes),
                 status: status.rawValue,
                 killedBy: entry.killedBy,
                 coveredBy: entry.coveredBy,
@@ -218,14 +271,29 @@ public func mutationTestingReport(_ entries: [ReportEntry], sources: [String: St
         projectRoot: projectRoot,
         framework: MTEReport.Framework(name: "swift-mutator", version: version),
         files: files,
-        testFiles: testFiles(entries)
+        testFiles: testFiles(entries, tests: tests),
+        killMatrix: killMatrix
     )
 }
 
-private func testFiles(_ entries: [ReportEntry]) -> [String: MTEReport.TestFile] {
-    let ids = Set(entries.flatMap { $0.killedBy + $0.coveredBy }).sorted()
-    return Dictionary(grouping: ids, by: testModule).mapValues { ids in
-        MTEReport.TestFile(tests: ids.map { MTEReport.TestFile.Test(id: $0, name: String($0.dropFirst(testModule($0).count + 1))) })
+private func testFiles(_ entries: [ReportEntry], tests: TestCatalog) -> [String: MTEReport.TestFile] {
+    var ids = Set(tests.ids)
+    for entry in entries {
+        ids.formUnion(entry.killedBy)
+        ids.formUnion(entry.coveredBy)
+    }
+    return Dictionary(grouping: ids.sorted(), by: { tests.locations[$0]?.file ?? testModule($0) }).reduce(into: [:]) { out, group in
+        // Grouped by module: no test of the group was found in a source.
+        guard let source = tests.sources[group.key] else {
+            out[group.key] = MTEReport.TestFile(source: nil, tests: group.value.map { MTEReport.TestFile.Test(id: $0, name: testName($0), location: nil) })
+            return
+        }
+        let bytes = Array(source.utf8)
+        let lines = LineIndex(bytes)
+        let records = group.value.map { id in
+            MTEReport.TestFile.Test(id: id, name: testName(id), location: tests.locations[id].map { range($0.location, lines: lines, bytes: bytes) })
+        }
+        out[group.key] = MTEReport.TestFile(source: source, tests: records)
     }
 }
 

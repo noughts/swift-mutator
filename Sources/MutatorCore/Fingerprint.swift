@@ -94,3 +94,28 @@ public func testFingerprints(ids: [String], modules: [String: [TestSource]], ext
     }
     return out
 }
+
+public struct TestLocation: Hashable, Sendable {
+    /// The test's source file, relative to the package root.
+    public let file: String
+    /// The whole test function, attributes included.
+    public let location: Location
+}
+
+/// Test id (`Module.Type/name`) -> where its function is, for the ids found in the module's sources.
+public func testLocations(ids: [String], modules: [String: [TestSource]]) -> [String: TestLocation] {
+    var out: [String: TestLocation] = [:]
+    for (module, moduleIds) in Dictionary(grouping: ids, by: testModule) {
+        let byKey = Dictionary(moduleIds.map { (testName($0), $0) }, uniquingKeysWith: { first, _ in first })
+        for source in (modules[module] ?? []).sorted(by: { $0.path < $1.path }) {
+            let lines = LineIndex(Array(source.text.utf8))
+            for test in functions(in: Syntax(Parser.parse(source: source.text))) {
+                for key in test.keys {
+                    guard let id = byKey[key], out[id] == nil else { continue }
+                    out[id] = TestLocation(file: source.path, location: lines.location(test.span))
+                }
+            }
+        }
+    }
+    return out
+}

@@ -4,7 +4,7 @@ import Testing
 // Ported from mizchi/mutator packages/core/test/plan.test.ts.
 //
 // Not ported: static mutants, weak mutation (infection), the experimental call graph (`related`),
-// `affected` tests and scopes, the kill matrix and RuntimeError, which swift-mutator does not
+// `affected` tests and scopes, and RuntimeError, which swift-mutator does not
 // have; and the paths for runs without coverage (`coverage: undefined`), since the dry run here
 // always measures it. Cases that left coverage out only for brevity give it explicitly.
 
@@ -27,8 +27,8 @@ private func snapshot(_ results: [MutantResult], _ tests: [TestInfo], toolVersio
 }
 
 /// Plans like the CLI does: the snapshot counts only for the current tool version and environment.
-private func planned(_ mutants: [Mutant], _ tests: [TestInfo], coverage: [String: [String]] = [:], previous: Snapshot? = nil, timeoutFactor: Double = 1.5, timeoutMs: Int = 5000) -> [PlanEntry] {
-    plan(PlanInput(mutants: mutants, tests: tests, coverage: coverage, previous: previous?.valid(toolVersion: "v1", envHash: "e1"), timeoutFactor: timeoutFactor, timeoutMs: timeoutMs))
+private func planned(_ mutants: [Mutant], _ tests: [TestInfo], coverage: [String: [String]] = [:], previous: Snapshot? = nil, timeoutFactor: Double = 1.5, timeoutMs: Int = 5000, killMatrix: Bool = false) -> [PlanEntry] {
+    plan(PlanInput(mutants: mutants, tests: tests, coverage: coverage, previous: previous?.valid(toolVersion: "v1", envHash: "e1"), timeoutFactor: timeoutFactor, timeoutMs: timeoutMs, killMatrix: killMatrix))
 }
 
 private func only(_ entries: [PlanEntry]) throws -> PlanEntry {
@@ -347,5 +347,19 @@ private func timeout(_ entry: PlanEntry) -> Int? {
         let m = mutant("k1")
         let previous = snapshot([result(m, .pending, ["t1"])], [test("t1")])
         #expect(runTests(try only(planned([m], [test("t1")], coverage: ["k1": ["t1"]], previous: previous))) == ["t1"])
+    }
+
+    @Test func aKilledResultWhoseCoveringTestsGrewHasAnIncompleteKillSet() throws {
+        let a = mutant("a")
+        // t2 is new: it did not run against `a`, so the reused kill set may miss it.
+        let grown = ["a": ["t1", "t2"]]
+        let previous = snapshot([result(a, .killed, ["t1"], ["t1"])], [test("t1")])
+        guard case let .reuse(_, reused) = try only(planned([a], [test("t1"), test("t2")], coverage: grown, previous: previous)) else {
+            Issue.record("expected reuse")
+            return
+        }
+        #expect(reused.incomplete == true)
+        #expect(kind(try only(planned([a], [test("t1"), test("t2")], coverage: grown, previous: previous, killMatrix: true))) == "run")
+        #expect(kind(try only(planned([a], [test("t1")], coverage: ["a": ["t1"]], previous: previous, killMatrix: true))) == "reuse")
     }
 }

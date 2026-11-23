@@ -12,7 +12,7 @@ import Testing
         /x/CartTests.swift:9: error: -[M.CartTests testB] : XCTAssertEqual failed
         Test Case '-[M.CartTests testB]' failed (0.002 seconds).
         """
-        #expect(failedXCTests(output: output, requested: requested) == ["M.CartTests/testB"])
+        #expect(failedXCTests(output: output, requested: requested) == TestFailures(failed: ["M.CartTests/testB"], crashed: false))
     }
 
     @Test func aCrashedXCTestStartedButNeverEnded() {
@@ -22,7 +22,7 @@ import Testing
         Test Case '-[M.CartTests testC]' started.
         Swift/ContiguousArrayBuffer.swift:692: Fatal error: Index out of range
         """
-        #expect(failedXCTests(output: output, requested: requested) == ["M.CartTests/testC"])
+        #expect(failedXCTests(output: output, requested: requested) == TestFailures(failed: ["M.CartTests/testC"], crashed: true))
     }
 
     @Test func xcTestFailuresOnLinux() {
@@ -30,7 +30,7 @@ import Testing
         Test Case 'CartTests.testA' started at 2026-01-01 00:00:00.000
         Test Case 'CartTests.testA' failed (0.001 seconds)
         """
-        #expect(failedXCTests(output: output, requested: requested) == ["M.CartTests/testA"])
+        #expect(failedXCTests(output: output, requested: requested) == TestFailures(failed: ["M.CartTests/testA"], crashed: false))
     }
 
     @Test func swiftTestingEventStream() {
@@ -43,7 +43,7 @@ import Testing
         {"kind":"event","payload":{"kind":"testEnded","testID":"M.S/bad(x:)/S.swift:5:4"}}
         {"kind":"event","payload":{"kind":"testStarted","testID":"M.S/crash()/S.swift:7:4"}}
         """
-        #expect(failedSwiftTestingTests(eventStream: stream, requested: ["M.S/ok()", "M.S/bad(x:)", "M.S/crash()"]) == ["M.S/bad(x:)", "M.S/crash()"])
+        #expect(failedSwiftTestingTests(eventStream: stream, requested: ["M.S/ok()", "M.S/bad(x:)", "M.S/crash()"]) == TestFailures(failed: ["M.S/bad(x:)", "M.S/crash()"], crashed: true))
     }
 
     @Test func idsAndFilters() {

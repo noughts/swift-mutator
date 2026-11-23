@@ -59,6 +59,7 @@ swift-mutator --since main             # PR mode: only mutants in the diff again
 swift-mutator --reporter text --reporter html --reporter json
 swift-mutator --list                   # list mutants without running them
 swift-mutator --fail-on-survived       # exit 2 if any mutant Survived (not detected)
+swift-mutator --kill-matrix            # also list tests that detect nothing, or add nothing over another test
 ```
 
 Add `.mutator/` to the target package's `.gitignore` (it holds the sandbox, snapshot, and reports). The sandbox's build products take about as much disk space as a debug build of the package and its tests (about 1 GB for a package of 190 source files and 1,700 tests). `.mutator/` can be deleted whenever you no longer need it; the next run then starts from scratch.
@@ -85,6 +86,14 @@ Rerunning without changes performs no dry runs and runs no mutants. Editing a si
 
 - **not detected** (`Survived`): Tests reach the mutant, but none of them fails. Strengthen an assertion, or disable it as an equivalent mutant.
 - **not reached** (`NoCoverage`): No test reaches the mutant. Add a test case.
+
+### Kill matrix
+
+`--kill-matrix` adds to the text summary and to `mutation.json` (`killMatrix`) the tests that detect nothing (they reach mutants but kill none), the tests that reach no mutant, the tests whose kill set is a strict subset of another test's (`subsumed`, a subsuming test of the same file listed first), and groups of tests with the same kill set (`duplicates`). Each test is shown with its file and line. As in the original, only mutants whose run executed every covering test count: `Timeout` and `CompileError` are left out, a mutant whose test process crashed is incomplete, and in this mode every test group of a mutant runs, and a `Killed` result is reused only when its covering tests are the ones it ran with.
+
+These are candidates for review, not for deletion: a test can pin behaviour no mutant represents, such as synthesized `Codable` (missing fields, unknown cases, encoded keys), raw values and constants, resource files, code compiled into the test target from outside the package, or the `nil` path of `guard let`.
+
+`mutation.json` lists every collected test under `testFiles`, keyed by its source file with its location and the file's source, so the HTML report shows the tests in their source (a test whose function is not found is listed under its module).
 
 ### Disabling mutants
 
@@ -161,6 +170,7 @@ No mutants are placed in: the bodies of `@inlinable` / `@_alwaysEmitIntoClient` 
 | `core/src/arid.ts`, `disable.ts`, `hash.ts`, `text.ts` | `Arid.swift`, `Disable.swift`, `Hash.swift` (the same cyrb53), `Text.swift` |
 | `core/src/diff.ts`, `cli/src/since.ts`, `git.ts` | `Diff.swift`, `Since.swift`, `Sources/MutatorCLI/Git.swift` |
 | `core/src/plan.ts`, `cli/src/coverage-cache.ts` | `Plan.swift`, `DryRun.swift`, `Fingerprint.swift` |
+| `cli/src/kill-matrix.ts` | `KillMatrix.swift` |
 | `cli/src/mte-report.ts`, `report.ts`, `status.ts` | `Report.swift` |
 | `@mizchi/mutator-typecheck` | `Diagnostics.swift` (identifies non-compiling mutants from compiler diagnostics) |
 | `@mizchi/mutator-vitest` (Vite transform, sessions) | `Sources/MutatorCLI/Sandbox.swift`, `TestRunner.swift`, `TestOutput.swift` |
@@ -170,7 +180,7 @@ No mutants are placed in: the bodies of `@inlinable` / `@_alwaysEmitIntoClient` 
 
 ### Features not ported
 
-Weak mutation (classifying mutants that don't infect program state without running them), `--kill-matrix`, `--reporter simplify` / `agent`, `select-tests`, `mutator accept`, critical regions, CI sharding, `--watch`, plugins, the static call graph (`--experimental-callgraph`), `--mutants-per-line` / `--time-budget`, and configuration files.
+Weak mutation (classifying mutants that don't infect program state without running them), `--reporter simplify` / `agent`, `select-tests`, `mutator accept`, critical regions, CI sharding, `--watch`, plugins, the static call graph (`--experimental-callgraph`), `--mutants-per-line` / `--time-budget`, and configuration files.
 
 ## Limitations
 

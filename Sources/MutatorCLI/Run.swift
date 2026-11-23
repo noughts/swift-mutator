@@ -97,7 +97,8 @@ func runMutation(_ options: Options) async throws -> Int32 {
     let listed = try await swift(["test", "list", "--skip-build"], in: sandbox)
     guard listed.status == 0 else { throw CLIError("swift test list failed:\n\(listed.output)") }
     let testIds = parseTestList(listed.stdout)
-    let fingerprints = testFingerprints(ids: testIds, modules: try testSources(root: root, package: package), extra: try testResources(root: root, package: package))
+    let testModules = try testSources(root: root, package: package)
+    let fingerprints = testFingerprints(ids: testIds, modules: testModules, extra: try testResources(root: root, package: package))
 
     // 5. Dry run: per-test coverage, only for the tests whose coverage may have changed.
     let allScopes = sources.flatMap { file in file.analysis.scopes.map { (key: $0.key(file: file.path), scope: $0) } }
@@ -122,7 +123,7 @@ func runMutation(_ options: Options) async throws -> Int32 {
     let failing = dry.filter { if case .passed = $0.run.outcome { false } else { true } }
     if !failing.isEmpty {
         let details = failing.prefix(5).map { entry -> String in
-            if case let .failed(_, output) = entry.run.outcome { return "  \(entry.id):\n" + output.split(separator: "\n").suffix(15).map { "    " + $0 }.joined(separator: "\n") }
+            if case let .failed(_, _, output) = entry.run.outcome { return "  \(entry.id):\n" + output.split(separator: "\n").suffix(15).map { "    " + $0 }.joined(separator: "\n") }
             return "  \(entry.id): timed out"
         }
         throw CLIError("\(failing.count) test(s) fail without mutants:\n" + details.joined(separator: "\n"), exitCode: 4)
@@ -135,7 +136,7 @@ func runMutation(_ options: Options) async throws -> Int32 {
     if !testIds.isEmpty, coverage.isEmpty, !liveKeys.isEmpty { log("warning: tests ran but reached no mutant; check --include") }
 
     // 6. Plan, and with --since the focus.
-    let entries = plan(PlanInput(mutants: mutants.filter { !excluded.contains($0.key) }, tests: tests, coverage: coverage, previous: previous, timeoutFactor: options.timeoutFactor, timeoutMs: options.timeoutMs))
+    let entries = plan(PlanInput(mutants: mutants.filter { !excluded.contains($0.key) }, tests: tests, coverage: coverage, previous: previous, timeoutFactor: options.timeoutFactor, timeoutMs: options.timeoutMs, killMatrix: options.killMatrix))
     var focus: [String: Focus]?
     if let since = options.since {
         let changes = try await gitChanges(root, since: since)
@@ -149,18 +150,18 @@ func runMutation(_ options: Options) async throws -> Int32 {
     log("\(mutants.count) mutants: \(jobs.count) to run, \(decided.filter { $0.source == .reuse }.count) reused, \(excluded.count) do not compile")
     let progress = Progress(total: jobs.count)
     let outcomes = await concurrentMap(jobs, limit: options.concurrency) { job in
-        let run = await runner.run(job.tests, environment: [activeEnvironment: job.mutant.key], timeoutMs: job.timeoutMs)
+        let run = await runner.run(job.tests, environment: [activeEnvironment: job.mutant.key], timeoutMs: job.timeoutMs, exhaustive: options.killMatrix)
         progress.tick()
         return run
     }
     var report = Dictionary(decided.map { ($0.mutant.key, $0) }, uniquingKeysWith: { first, _ in first })
     for (job, run) in zip(jobs, outcomes) {
-        let (status, killedBy): (MutantStatus, [String]) = switch run.outcome {
-        case .passed: (.survived, [])
-        case let .failed(failed, _): (.killed, failed)
-        case .timedOut: (.timeout, [])
+        let (status, killedBy, complete): (MutantStatus, [String], Bool) = switch run.outcome {
+        case .passed: (.survived, [], true)
+        case let .failed(failed, complete, _): (.killed, failed, complete)
+        case .timedOut: (.timeout, [], false)
         }
-        report[job.mutant.key] = ReportEntry(mutant: job.mutant, status: status, source: .run, killedBy: killedBy, coveredBy: job.tests)
+        report[job.mutant.key] = ReportEntry(mutant: job.mutant, status: status, source: .run, killedBy: killedBy, coveredBy: job.tests, incomplete: !complete)
     }
 
     // 8. Snapshot: every verdict, so the next run can reuse it.
@@ -171,7 +172,7 @@ func runMutation(_ options: Options) async throws -> Int32 {
     }
     let durationsByKey = Dictionary(zip(jobs, outcomes).map { ($0.0.mutant.key, $0.1.durationMs) }, uniquingKeysWith: { first, _ in first })
     let results = ordered.filter { $0.status != .ignored }.map { e in
-        MutantResult(mutant: e.mutant, status: e.status, killedBy: e.killedBy, coveredBy: e.coveredBy, durationMs: durationsByKey[e.mutant.key])
+        MutantResult(mutant: e.mutant, status: e.status, killedBy: e.killedBy, coveredBy: e.coveredBy, durationMs: durationsByKey[e.mutant.key], incomplete: e.incomplete)
     }
     let snapshot = Snapshot(toolVersion: toolVersion, envHash: envHash, results: results, tests: tests, coverage: coverageByTest, scopes: scopeHashes, declarationScopes: declarationScopes.sorted())
     try writeJSON(snapshot, to: snapshotURL)
@@ -179,12 +180,19 @@ func runMutation(_ options: Options) async throws -> Int32 {
     // 9. Reports and the quality gate.
     let thresholds = Thresholds(breakAt: options.thresholdBreak)
     let diffOnly = focus != nil
+    // Test locations take a parse of every test file: only for the reports that show them.
+    let catalog = options.killMatrix || options.reporters.contains("json") || options.reporters.contains("html") ? TestCatalog(
+        ids: testIds,
+        locations: testLocations(ids: testIds, modules: testModules),
+        sources: Dictionary(testModules.values.flatMap { $0.map { ($0.path, $0.text) } }, uniquingKeysWith: { first, _ in first })
+    ) : TestCatalog()
+    let matrix = options.killMatrix ? killMatrix(ordered, tests: testIds, fileOf: catalog.locations.mapValues(\.file)) : nil
     let facts = RunFacts(durationMs: Int(Date().timeIntervalSince(started) * 1000), files: files.count, measuredTests: measureIds.count, totalTests: testIds.count, buildRounds: rounds, diffOnly: diffOnly)
-    if options.reporters.contains("text") { print(formatSummary(ordered, facts: facts, thresholds: thresholds)) }
+    if options.reporters.contains("text") { print(formatSummary(ordered, facts: facts, thresholds: thresholds, killMatrix: matrix, tests: catalog)) }
     if options.reporters.contains("json") || options.reporters.contains("html") {
         let dir = options.reportDir.map { URL(fileURLWithPath: $0, relativeTo: root) } ?? mutatorDir.appendingPathComponent("report")
         try fm.createDirectory(at: dir, withIntermediateDirectories: true)
-        let mte = mutationTestingReport(ordered, sources: Dictionary(uniqueKeysWithValues: sources.map { ($0.path, $0.text) }), projectRoot: root.path, version: toolVersion, thresholds: thresholds, diffOnly: diffOnly)
+        let mte = mutationTestingReport(ordered, sources: Dictionary(uniqueKeysWithValues: sources.map { ($0.path, $0.text) }), projectRoot: root.path, version: toolVersion, thresholds: thresholds, diffOnly: diffOnly, tests: catalog, killMatrix: matrix)
         if options.reporters.contains("json") { try encodeReport(mte).write(to: dir.appendingPathComponent("mutation.json"), atomically: true, encoding: .utf8) }
         if options.reporters.contains("html") { try htmlReport(mte).write(to: dir.appendingPathComponent("index.html"), atomically: true, encoding: .utf8) }
         log("reports written to \(dir.path)")

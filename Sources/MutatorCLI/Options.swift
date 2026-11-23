@@ -21,6 +21,7 @@ struct Options: Sendable {
     var failOnSurvived = false
     var thresholdBreak: Double?
     var list = false
+    var killMatrix = false
     var maxBuildRounds = 10
     var help = false
     var showVersion = false
@@ -55,6 +56,8 @@ options:
   --report-dir <dir>        where json/html go (default: <root>/.mutator/report)
   --fail-on-survived        exit 2 when a reported mutant is undetected
   --threshold-break <n>     exit 2 when the score is below n percent
+  --kill-matrix             tests that detect nothing, are subsumed by another, or duplicate one
+                            (text and json reporters): candidates for review, not for deletion
   --max-build-rounds <n>    rebuilds that drop non-compiling mutants (default 10)
   --list                    list the mutants and exit, running nothing
   --version, -h/--help
@@ -107,6 +110,7 @@ func parseOptions(_ arguments: [String]) throws -> Options {
         case "--threshold-break": options.thresholdBreak = try number(arg)
         case "--max-build-rounds": options.maxBuildRounds = max(1, try number(arg))
         case "--list": options.list = true
+        case "--kill-matrix": options.killMatrix = true
         case "--version": options.showVersion = true
         case "-h", "--help": options.help = true
         default: throw CLIError("unknown option \(arg)\n\n\(usage)")

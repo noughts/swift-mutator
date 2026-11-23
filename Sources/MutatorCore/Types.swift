@@ -138,11 +138,21 @@ public struct MutantResult: Codable, Hashable, Sendable {
     /// Tests that reached this mutant in the dry run.
     public let coveredBy: [String]
     public let durationMs: Int?
+    /// true when some covering tests never ran (a crash stopped them): `killedBy` is partial.
+    /// nil otherwise, so the snapshot stays small.
+    public private(set) var incomplete: Bool?
 
     /// `file#scopeId`, as `Scope.key(file:)`.
     public var scopeKey: String { "\(file)#\(scopeId)" }
 
-    public init(mutant: Mutant, status: MutantStatus, killedBy: [String], coveredBy: [String], durationMs: Int? = nil) {
+    /// The same result, its kill set marked partial.
+    func markedIncomplete() -> MutantResult {
+        var copy = self
+        copy.incomplete = true
+        return copy
+    }
+
+    public init(mutant: Mutant, status: MutantStatus, killedBy: [String], coveredBy: [String], durationMs: Int? = nil, incomplete: Bool = false) {
         key = mutant.key
         file = mutant.file
         scopeId = mutant.scope.id
@@ -151,6 +161,7 @@ public struct MutantResult: Codable, Hashable, Sendable {
         self.killedBy = killedBy
         self.coveredBy = coveredBy
         self.durationMs = durationMs
+        self.incomplete = incomplete ? true : nil
     }
 }
 
