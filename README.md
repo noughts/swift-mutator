@@ -133,7 +133,7 @@ report          text summary, plus JSON / HTML in the mutation-testing-elements 
 | ArithmeticOperator | `a + b` → `a - b`, `*`↔`/`, `%`→`*`, `&+`↔`&-` | `+` with string or array literals is skipped |
 | EqualityOperator | `<` → `<=` / `>=`, `==` ↔ `!=`, `===` ↔ `!==` | Same |
 | LogicalOperator | `&&` ↔ `\|\|`, `a ?? b` → `b` | `??` is replaced with its right-hand side (keeps the type) |
-| ConditionalExpression | `if` / `guard` / ternary conditions → `true` / `false`, `while` / `repeat` → `false` | Comma-separated conditions are treated like `&&` |
+| ConditionalExpression | `if` / `guard` / ternary conditions → `true` / `false`, `while` / `repeat` → `false`; a condition list of bindings only (`guard let a, let b`, `if case .x = y`) gets `, false` appended | Comma-separated conditions are treated like `&&` |
 | BooleanLiteral | `true` ↔ `false`, `!x` → `x` | Same |
 | UnaryOperator | `-x` → `x`, `~x` → `x` | Removal only (as in cargo-mutants) |
 | AssignmentOperator | `+=` ↔ `-=`, `*=` ↔ `/=`, `<<=` ↔ `>>=`, `&=` ↔ `\|=` | Same |
@@ -149,7 +149,7 @@ report          text summary, plus JSON / HTML in the mutation-testing-elements 
 
 The original's ArrowFunction (Swift has no `undefined`) and UpdateOperator (Swift has no `++` / `--`) are not ported.
 
-No mutants are placed in: the bodies of `@inlinable` / `@_alwaysEmitIntoClient` / `@_transparent` declarations (they are copied into clients and can't reference the per-file runtime), default arguments, enum raw values, attribute and macro arguments, `#if` conditions, name-binding patterns (`case let x`, `case .some(let x)`), types, and types that are called, such as `[Int]()`. Expression patterns without bindings (`case "GET":`, `case a == b:`) are mutated.
+No mutants are placed in: the bodies of `@inlinable` / `@_alwaysEmitIntoClient` / `@_transparent` declarations (they are copied into clients and can't reference the per-file runtime), default arguments, enum raw values, attribute and macro arguments, `#if` conditions, name-binding patterns (`case let x`, `case .some(let x)`), types, and types that are called, such as `[Int]()`. An optional binding is not forced to succeed (that has no spelling that compiles without types), so the `nil` path of `guard let x else { return nil }` has no mutant of its own. Expression patterns without bindings (`case "GET":`, `case a == b:`) are mutated.
 
 ## Mapping to mizchi/mutator
 

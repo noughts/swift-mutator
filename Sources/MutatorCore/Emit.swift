@@ -106,9 +106,8 @@ private func wrapper(_ bytes: [UInt8], _ plan: PlacementPlan, mutants: [Mutant],
     }
     var text = ""
     var spans: [(String, Int, Int)] = []
-    let add = { (m: Mutant, before: String, after: String) in
+    let add = { (m: Mutant, before: String, body: String, after: String) in
         text += before
-        let body = mutated(m)
         let start = text.utf8.count
         text += body
         spans.append((m.key, start, start + body.utf8.count))
@@ -117,17 +116,20 @@ private func wrapper(_ bytes: [UInt8], _ plan: PlacementPlan, mutants: [Mutant],
     switch plan.kind {
     case .expression:
         text = "("
-        for m in mutants { add(m, "__mutator_on(\(index[m.key]!)) ? (", ") : ") }
+        for m in mutants { add(m, "__mutator_on(\(index[m.key]!)) ? (", mutated(m), ") : ") }
         text += "("
         return (Insert(text: text, spans: spans), "))")
     case .statement:
-        for m in mutants { add(m, "if __mutator_on(\(index[m.key]!)) { ", " } else ") }
+        for m in mutants { add(m, "if __mutator_on(\(index[m.key]!)) { ", mutated(m), " } else ") }
         text += "{ "
         return (Insert(text: text, spans: spans), " }")
     case .block:
         text = "{ "
-        for m in mutants { add(m, "if __mutator_on(\(index[m.key]!)) ", " else ") }
+        for m in mutants { add(m, "if __mutator_on(\(index[m.key]!)) ", mutated(m), " else ") }
         return (Insert(text: text, spans: spans), " }")
+    case .condition:
+        for m in mutants { add(m, ", ", "!__mutator_on(\(index[m.key]!))", "") }
+        return (Insert(text: text, spans: spans), "")
     }
 }
 

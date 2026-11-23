@@ -25,6 +25,8 @@ func methods(_ xs: [Int]) -> [Int] { xs.filter { $0 > 1 }.sorted() + [max(xs.min
 func labeled() -> Int { var t = 0; outer: for i in 0 ..< 3 { for j in 0 ..< 3 { if j > i { continue outer }; t += 1 } }; return t }
 func switching(_ x: Int, _ word: String) -> Int { switch word { case "one": return 1; default: break }; switch (x, word) { case (let n, "two"): return n * 10; default: break }; switch x { case 1: return x + 1; default: return x - 1 } }
 func guarded(_ x: Int?) -> Int { guard let x, x > 2 else { return -1 }; return x * 2 }
+func bound(_ a: Int?, _ b: Int?) -> Int { guard let a, let b else { return -1 }; if case let s? = Optional(a + b) { return s }; return 0 }
+func drained(_ xs: [Int]) -> Int { var it = xs.makeIterator(); var t = 0; while let x = it.next() { t += x }; return t }
 func repeated() -> Int { var k = 0; repeat { k += 2 } while k < 5; return k }
 func pick(_ c: Bool) -> Int { if c { 10 } else { 20 } }
 func regex(_ s: String) -> Bool { s.wholeMatch(of: /^[a-c]+\\d{1,2}$/) != nil }
@@ -32,7 +34,7 @@ func calls() -> [Int] { var log: [Int] = []; func record(_ v: Int) { log.append(
 struct Counter { var value = 1 + 1; var doubled: Int { value * 2 }; mutating func bump() { value += 1 } }
 func counter() -> Int { var c = Counter(); c.bump(); return c.doubled }
 func report() -> String {
-    "\\(arithmetic()) \\(nested(3, 1)) \\(nested(2, 2)) \\(logical(nil, true, false)) \\(conditional()) \\(whileLoop()) \\(strings("xy")) \\(collections()) \\(String(describing: optional("abc"))) \\(String(describing: optional(nil))) \\(assign()) \\(booleans()) \\(methods([3, 1, 2])) \\(labeled()) \\(switching(1, "one")) \\(switching(5, "two")) \\(guarded(4)) \\(guarded(1)) \\(repeated()) \\(pick(true)) \\(regex("ab1")) \\(regex("x")) \\(calls()) \\(counter())"
+    "\\(arithmetic()) \\(nested(3, 1)) \\(nested(2, 2)) \\(logical(nil, true, false)) \\(conditional()) \\(whileLoop()) \\(strings("xy")) \\(collections()) \\(String(describing: optional("abc"))) \\(String(describing: optional(nil))) \\(assign()) \\(booleans()) \\(methods([3, 1, 2])) \\(labeled()) \\(switching(1, "one")) \\(switching(5, "two")) \\(guarded(4)) \\(guarded(1)) \\(bound(1, 2)) \\(bound(nil, 2)) \\(drained([1, 2])) \\(repeated()) \\(pick(true)) \\(regex("ab1")) \\(regex("x")) \\(calls()) \\(counter())"
 }
 """
 

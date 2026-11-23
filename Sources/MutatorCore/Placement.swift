@@ -9,9 +9,12 @@ public enum PlacementKind: Sendable {
     case statement
     /// `{ if on(1) { mutated } else { original } }` replacing a code block.
     case block
+    /// `, !on(1)` appended to a condition list: the list with `, false` when on.
+    case condition
 }
 
 func findPlacement(_ anchor: Syntax) -> (node: Syntax, kind: PlacementKind)? {
+    if anchor.is(ConditionElementListSyntax.self) { return (anchor, .condition) }
     var current: Syntax? = anchor
     while let node = current {
         if let kind = placementKind(node) { return (node, kind) }

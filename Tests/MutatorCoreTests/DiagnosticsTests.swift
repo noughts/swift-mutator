@@ -49,6 +49,14 @@ import Testing
         #expect(blamed.keys == Set(f.analysis.mutants.filter { $0.original == "a + b" }.map(\.key)))
     }
 
+    @Test func anErrorAtAnOperatorBlamesTheMutantsOfItsOperands() {
+        // `""` cannot be a `Character`: swiftc reports `Character == String` at `==`, outside every mutant.
+        let source = "func strip(_ s: String) -> String {\n    var t = s\n    while let c = t.first, c == \"-\" {\n        t = String(t.dropFirst())\n    }\n    return t\n}"
+        let f = file(source)
+        let blamed = blame([error(at: "== (__mutator_on", in: f)], files: ["A.swift": f])
+        #expect(blamed.keys == Set(f.analysis.mutants.filter { $0.original == "\"-\"" }.map(\.key)))
+    }
+
     @Test func anErrorThatStaysIsBlamedOnItsFunction() {
         // The statement's mutants were left out and the error is still there.
         let (analysis, emission) = emitted("func f(_ a: Int, _ b: Int) -> Int {\n    let c = a + b\n    return c * 2\n}") { $0.original == "a + b" }
