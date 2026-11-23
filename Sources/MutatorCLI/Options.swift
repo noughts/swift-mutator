@@ -1,7 +1,7 @@
 import Foundation
 import MutatorCore
 
-let toolVersion = "0.2.0"
+let toolVersion = "0.3.0"
 
 struct Options: Sendable {
     var root = FileManager.default.currentDirectoryPath
