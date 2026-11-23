@@ -41,6 +41,23 @@ import Testing
         #expect(blamed.keys.isSubset(of: Set(f.emission.keys)))
     }
 
+    @Test func anErrorOutsideAnyMutantBlamesTheMutantsOfItsStatement() {
+        let source = "func f(_ a: Int, _ b: Int) -> Int {\n    let c = a + b\n    return c * 2\n}"
+        let f = file(source)
+        // A type error a mutant causes may show anywhere in its expression.
+        let blamed = blame([error(at: "let c", in: f)], files: ["A.swift": f])
+        #expect(blamed.keys == Set(f.analysis.mutants.filter { $0.original == "a + b" }.map(\.key)))
+    }
+
+    @Test func anErrorThatStaysIsBlamedOnItsFunction() {
+        // The statement's mutants were left out and the error is still there.
+        let (analysis, emission) = emitted("func f(_ a: Int, _ b: Int) -> Int {\n    let c = a + b\n    return c * 2\n}") { $0.original == "a + b" }
+        let f = InstrumentedFile(analysis: analysis, emission: emission)
+        let blamed = blame([error(at: "let c", in: f)], files: ["A.swift": f])
+        #expect(!blamed.keys.isEmpty)
+        #expect(blamed.keys == Set(emission.keys))
+    }
+
     @Test func errorsInFilesWithoutMutantsAreUnattributed() {
         let f = file("func f(_ a: Int) -> Int { a + 1 }")
         let other = CompilerError(path: "B.swift", line: 1, column: 1, message: "x")

@@ -23,6 +23,8 @@ public struct Analysis: Sendable {
     /// Every scope of the file, with or without mutants.
     public let scopes: [Scope]
     public let placements: [PlacementPlan]
+    /// Spans of the statements and member declarations of runtime code (for blaming compiler errors).
+    public let statements: [Span]
     /// The file did not parse; nothing was mutated.
     public let parseError: Bool
 }
@@ -87,7 +89,7 @@ public func analyze(file: String, source: String, options: AnalyzeOptions = .ini
     let bytes = Array(source.utf8)
     let parsed = Parser.parse(source: source)
     if parsed.hasError {
-        return Analysis(mutants: [], scopes: [], placements: [], parseError: true)
+        return Analysis(mutants: [], scopes: [], placements: [], statements: [], parseError: true)
     }
     let tree = OperatorTable.standardOperators.foldAll(parsed) { _ in }
     let lines = LineIndex(bytes)
@@ -100,10 +102,12 @@ public func analyze(file: String, source: String, options: AnalyzeOptions = .ini
     var tracker = ScopeTracker(hashOf: hashOf)
     var path: [String] = []
     var scopes: [Scope] = []
+    var statements: [Span] = []
     var found: [Found] = []
     walk(tree, component: "", visit: { node, component in
         path.append(component)
         if let scope = tracker.enter(node, depth: path.count) { scopes.append(scope) }
+        if node.is(CodeBlockItemSyntax.self) || node.is(MemberBlockItemSyntax.self) { statements.append(node.span) }
         guard let frame = tracker.current else { return }
         let astPath = path[frame.depth...].joined(separator: "/")
         for mutate in mutators {
@@ -150,7 +154,7 @@ public func analyze(file: String, source: String, options: AnalyzeOptions = .ini
     let plans = placements.map { p in
         PlacementPlan(span: replacedSpan(p.node), kind: p.kind, implicitReturnAt: implicitReturnOffset(p.node), keys: p.keys)
     }
-    return Analysis(mutants: mutants, scopes: scopes, placements: plans, parseError: false)
+    return Analysis(mutants: mutants, scopes: scopes, placements: plans, statements: statements, parseError: false)
 }
 
 /// The source with one mutant applied (for reports and previews).

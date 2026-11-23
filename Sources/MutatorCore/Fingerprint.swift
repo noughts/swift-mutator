@@ -2,8 +2,9 @@ import SwiftParser
 import SwiftSyntax
 
 // Test fingerprints: a test changes when its own function changes, when the type holding it
-// changes elsewhere (setUp, helpers inside it), or when the module's shared test code changes
-// (helper types and functions). Other tests, imports and new test types do not count.
+// changes elsewhere (setUp, helpers inside it), when the private helpers of its file change, or
+// when the module's shared test code changes (other helper types and functions). Other tests,
+// imports and new test types do not count.
 
 public struct TestSource: Sendable {
     public let path: String
@@ -33,6 +34,11 @@ private func functions(in node: Syntax, types: [String] = []) -> [TestFunction] 
     return node.children(viewMode: .sourceAccurate).flatMap { functions(in: $0, types: types) }
 }
 
+/// `private` / `fileprivate` at the top level: visible in its own file only.
+private func isFilePrivate(_ node: Syntax) -> Bool {
+    node.asProtocol(WithModifiersSyntax.self)?.modifiers.contains { ["private", "fileprivate"].contains($0.name.text) } == true
+}
+
 /// Test id (`Module.Type/name`) -> fingerprint. `extra` adds per-module content (resources).
 public func testFingerprints(ids: [String], modules: [String: [TestSource]], extra: [String: String] = [:]) -> [String: String] {
     var out: [String: String] = [:]
@@ -43,6 +49,9 @@ public func testFingerprints(ids: [String], modules: [String: [TestSource]], ext
         var own: [String: String] = [:]
         var shells: [String: [String]] = [:]
         var shared: [String] = []
+        /// File -> its private declarations, which only its own tests can use.
+        var local: [String: [String]] = [:]
+        var fileOf: [String: String] = [:]
         var whole: [String] = []
         for source in (modules[module] ?? []).sorted(by: { $0.path < $1.path }) {
             let tree = Parser.parse(source: source.text)
@@ -52,13 +61,20 @@ public func testFingerprints(ids: [String], modules: [String: [TestSource]], ext
                 if node.is(ImportDeclSyntax.self) { continue }
                 let tests = functions(in: node).filter { $0.keys.contains(where: wanted.contains) }
                 for test in tests {
-                    for key in test.keys where wanted.contains(key) { own[key] = test.hash }
+                    for key in test.keys where wanted.contains(key) {
+                        own[key] = test.hash
+                        fileOf[key] = source.path
+                    }
                 }
+                // A test at the top level is only its own.
+                if tests.contains(where: { $0.span == node.span }) { continue }
                 // Tests are dropped, not marked: adding a test leaves the others alone.
                 let text = normalizedTokens(node, holes: tests.map(\.span).sorted { $0.start < $1.start }, placeholder: nil)
                 if text.isEmpty { continue }
                 if let type = typeDeclName(node), !tests.isEmpty {
                     shells[type, default: []].append(text)
+                } else if isFilePrivate(node) {
+                    local[source.path, default: []].append(text)
                 } else {
                     shared.append(text)
                 }
@@ -67,11 +83,13 @@ public func testFingerprints(ids: [String], modules: [String: [TestSource]], ext
         let sharedHash = stableHash(shared.joined(separator: "\0") + "\0" + (extra[module] ?? ""))
         let wholeHash = stableHash(whole.joined(separator: "\0"))
         let shellHashes = shells.mapValues { stableHash($0.joined(separator: "\0")) }
+        let localHashes = local.mapValues { stableHash($0.joined(separator: "\0")) }
         for id in moduleIds {
             let key = rest(id)
             let container = key.contains("/") ? String(key.prefix { $0 != "/" }) : nil
             let shell = container.flatMap { shellHashes[$0] } ?? ""
-            out[id] = stableHash([sharedHash, shell, own[key] ?? "*" + wholeHash].joined(separator: "\0"))
+            let fileLocal = fileOf[key].flatMap { localHashes[$0] } ?? ""
+            out[id] = stableHash([sharedHash, shell, fileLocal, own[key] ?? "*" + wholeHash].joined(separator: "\0"))
         }
     }
     return out

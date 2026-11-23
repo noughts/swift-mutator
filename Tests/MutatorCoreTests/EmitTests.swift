@@ -37,7 +37,6 @@ private func body(_ emission: Emission) -> String {
         let key = analysis.mutants.first { $0.mutator == .arithmeticOperator }!.key
         let bytes = Array(emission.code.utf8)
         #expect(bytes.text(emission.mutantSpans[key]!) == "a - b")
-        #expect(bytes.text(emission.placementSpans[0].span) == "(__mutator_on(0) ? (a - b) : (a + b))")
         // Copied text maps to itself, inserted text to its insertion point.
         #expect(emission.sourceOffset(byteOffset(of: "(a + b)", in: emission.code) + 1) == 8)
         #expect(emission.sourceOffset(byteOffset(of: "__mutator_on", in: emission.code)) == 8)

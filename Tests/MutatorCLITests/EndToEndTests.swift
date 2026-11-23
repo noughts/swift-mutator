@@ -78,6 +78,90 @@ private func snapshot(_ root: URL) throws -> Snapshot {
         #expect(compileErrors.allSatisfy { $0.file == "Sources/Pricing/Joins.swift" })
     }
 
+    /// A package inside an app's repository, as in an iOS project: its tests share a file of the app
+    /// through a symbolic link, look up the app's resources from `#filePath`, and keep files in the
+    /// home directory from a `.serialized` suite (whose tests the sandbox runs in parallel).
+    @Test func testsSeeThePackageAsInPlaceButNotTheUserHome() async throws {
+        let fm = FileManager.default
+        let repo = fm.temporaryDirectory.appendingPathComponent("swift-mutator-app-\(UUID().uuidString)")
+        defer { try? fm.removeItem(at: repo) }
+        let queue = "SwiftMutatorQueue-\(UUID().uuidString)"
+        let files = [
+            "App/Models/Shared.swift": "struct Shared { static func twice(_ x: Int) -> Int { x * 2 } }\n",
+            "App/Resources/model.glb": "model\n",
+            "Packages/Kit/Package.swift": """
+            // swift-tools-version: 6.0
+            import PackageDescription
+            let package = Package(name: "Kit", platforms: [.macOS(.v13)], targets: [.target(name: "Kit"), .testTarget(name: "KitTests", dependencies: ["Kit"])])
+            """,
+            "Packages/Kit/Sources/Kit/Queue.swift": """
+            import Foundation
+            public func add(_ a: Int, _ b: Int) -> Int { a + b }
+            public enum Queue {
+                static func directory() throws -> URL {
+                    try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true).appendingPathComponent("\(queue)")
+                }
+                public static func save(_ name: String) throws {
+                    try FileManager.default.createDirectory(at: directory(), withIntermediateDirectories: true)
+                    try Data(name.utf8).write(to: directory().appendingPathComponent(name))
+                }
+                public static func load() throws -> [String] { try FileManager.default.contentsOfDirectory(atPath: directory().path).sorted() }
+                public static func clear() throws { try? FileManager.default.removeItem(at: directory()) }
+            }
+            """,
+            "Packages/Kit/Tests/KitTests/KitTests.swift": """
+            import Foundation
+            import Testing
+            @testable import Kit
+
+            @Test func usesTheAppsCode() { #expect(Shared.twice(add(1, 1)) == 4) }
+
+            @Test func findsTheAppsResourceUpTheTree() {
+                let ancestors = sequence(first: URL(fileURLWithPath: #filePath)) { $0.path == "/" ? nil : $0.deletingLastPathComponent() }
+                #expect(ancestors.contains { FileManager.default.fileExists(atPath: $0.appendingPathComponent("App/Resources/model.glb").path) })
+            }
+
+            @Suite(.serialized) struct QueueTests {
+                @Test func one() throws { try Queue.clear(); try Queue.save("a"); #expect(try Queue.load() == ["a"]); try Queue.clear() }
+                @Test func two() throws { try Queue.clear(); try Queue.save("b"); try Queue.save("c"); #expect(try Queue.load() == ["b", "c"]); try Queue.clear() }
+            }
+            """,
+        ]
+        for (path, text) in files {
+            let url = repo.appendingPathComponent(path)
+            try fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try text.write(to: url, atomically: true, encoding: .utf8)
+        }
+        let link = repo.appendingPathComponent("Packages/Kit/Tests/KitTests/Support/Shared.swift")
+        try fm.createDirectory(at: link.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try fm.createSymbolicLink(atPath: link.path, withDestinationPath: "../../../../../App/Models/Shared.swift")
+        var options = Options()
+        options.root = repo.appendingPathComponent("Packages/Kit").path
+        options.concurrency = 4
+
+        #expect(try await runMutation(options) == 0)
+        let results = try snapshot(URL(fileURLWithPath: options.root)).results
+        #expect(results.contains { $0.status == .killed })
+        let home = try fm.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: false)
+        #expect(!fm.fileExists(atPath: home.appendingPathComponent(queue).path))
+        // The original is still a link to the app's file.
+        #expect(try fm.destinationOfSymbolicLink(atPath: link.path) == "../../../../../App/Models/Shared.swift")
+    }
+
+    /// A mutant that leaves elements in `Set` order (a `sorted` removed) must get the same verdict on every run.
+    @Test func testProcessesIterateASetInTheSameOrder() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("swift-mutator-hash-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try "print(Array(Set((1...20).map(String.init))))\n".write(to: dir.appendingPathComponent("main.swift"), atomically: true, encoding: .utf8)
+        #expect(try await runProcess("swiftc", ["main.swift", "-o", "order"], cwd: dir).status == 0)
+        var orders = Set<String>()
+        for _ in 0 ..< 3 {
+            orders.insert(try await runProcess(dir.appendingPathComponent("order").path, [], cwd: dir, environment: testEnvironment([:])).stdout)
+        }
+        #expect(orders.count == 1)
+    }
+
     @Test func instrumentedSourcesTypeCheck() async throws {
         let source = """
         import Foundation
@@ -95,6 +179,9 @@ private func snapshot(_ root: URL) throws -> Snapshot {
             public func either(_ a: Int?, _ b: Int) -> Int { a ?? b }
             public func flag(_ a: Bool) -> Bool { !a && -items.count < 0 }
             public func pick(_ c: Bool) -> Int { if c { 1 } else { 2 } }
+            public func kind(_ n: Int) -> String { switch n { case 0: "zero" default: n > 0 ? "plus" : "minus" } }
+            public func phase(_ n: Int) -> String? { switch n { case 0: guard n < 1 else { return "a" }; return "b" default: return nil } }
+            public func sign(_ n: Int) -> Int { if n > 0 { return 1 } else if n < 0 { return -1 } else { return 0 } }
             public func risky(_ x: Int) throws -> Int { if x > 10 { throw CocoaError(.fileNoSuchFile) }; return x * 3 }
             public func work() async throws -> Int { try await Task.sleep(nanoseconds: 1); return try risky(1) + 1 }
             public func loop(_ n: Int) -> Int { var i = 0; var sum = 0; while i < n { sum += i; i += 1 }; repeat { sum -= 1 } while sum > 100; for x in items where x > 1 { sum += x }; return sum }

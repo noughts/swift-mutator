@@ -22,6 +22,10 @@ import Testing
         #expect(out.contains(#"path: "Sources/App""#))
     }
 
+    @Test func aSourceIsCompiledAtItsOriginalPath() {
+        #expect(atOriginalPath("let a = 1\n", path: #"/work/a "b"/A.swift"#) == "#sourceLocation(file: \"/work/a \\\"b\\\"/A.swift\", line: 1)\nlet a = 1\n")
+    }
+
     @Test func pathsAreNormalized() {
         #expect(resolvePath("../a/./b/../c", base: "/x/y") == "/x/a/c")
         #expect(resolvePath("/abs", base: "/x") == "/abs")

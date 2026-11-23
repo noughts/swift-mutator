@@ -74,9 +74,9 @@ func discoverBundles(binPath: String) throws -> [TestBundle] {
     }
 }
 
-/// The bundle holding a test module: per test target (Swift Build), or the package's single one.
+/// The bundle holding the tests: the native build system builds one for the whole package.
 private func bundle(for module: String, in bundles: [TestBundle]) -> TestBundle? {
-    bundles.first { $0.name == module } ?? (bundles.count == 1 ? bundles[0] : bundles.first { $0.name.hasSuffix("PackageTests") })
+    bundles.count == 1 ? bundles[0] : bundles.first { $0.name.hasSuffix("PackageTests") }
 }
 
 /// The environment of a test process: ours without mutator variables, plus `extra`.
@@ -85,6 +85,9 @@ func testEnvironment(_ extra: [String: String]) -> [String: String] {
     env.merge(extra) { _, new in new }
     // Crashing mutants are common; the runtime backtracer would make each crash slow.
     env["SWIFT_BACKTRACE"] = "enable=no"
+    // The same order of Set and Dictionary in every process: a mutant whose outcome depends on it
+    // (a `sorted` removed) gets the same verdict on every run.
+    env["SWIFT_DETERMINISTIC_HASHING"] = "1"
     return env
 }
 
@@ -102,8 +105,18 @@ struct TestRunner: Sendable {
     }
 
     /// Runs `ids` in order of first appearance per bundle and library; stops at the first failing group.
+    /// Side effect: a home directory of its own for the run, removed afterwards. Tests run in
+    /// parallel processes (a `.serialized` suite included), so files they keep in the home
+    /// (Application Support, caches, preferences) would race, and a mutant would leave them behind.
+    /// `TMPDIR` points into it too, but on macOS Foundation's temporary directory ignores it
+    /// (`confstr(_CS_DARWIN_USER_TEMP_DIR)`): what tests put there stays in the user's.
     func run(_ ids: [String], environment: [String: String], timeoutMs: Int?) async -> TestRun {
-        let env = baseEnvironment.merging(environment) { _, new in new }
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("swift-mutator-home-\(UUID().uuidString)")
+        let tmp = home.appendingPathComponent("tmp")
+        try? FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let isolated = ["HOME": home.path, "CFFIXED_USER_HOME": home.path, "TMPDIR": tmp.path + "/"]
+        let env = baseEnvironment.merging(environment) { _, new in new }.merging(isolated) { _, new in new }
         var groups: [(bundle: TestBundle, swiftTesting: Bool, ids: [String])] = []
         for id in ids {
             guard let target = bundle(for: testModule(id), in: bundles) else { continue }
